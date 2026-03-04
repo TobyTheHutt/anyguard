@@ -1,0 +1,113 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  issues-exit-code: 1
+  modules-download-mode: readonly
+
+linters:
+  disable-all: true
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - errorlint
+    - nilerr
+    - nilnil
+    - bodyclose
+    - copyloopvar
+    - rowserrcheck
+    - sqlclosecheck
+    - revive
+    - gocritic
+    - goconst
+    - dupl
+    - funlen
+    - nestif
+    - nolintlint
+    - maintidx
+    - cyclop
+    - gocyclo
+    - gocognit
+    - gosec
+    - noctx
+    - contextcheck
+    - containedctx
+
+linters-settings:
+  govet:
+    enable:
+      - shadow
+    settings:
+      shadow:
+        strict: true
+
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  staticcheck:
+    checks:
+      - all
+
+  revive:
+    confidence: 0.2
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+      - style
+    enabled-checks:
+      - commentedOutCode
+      - commentedOutImport
+      - commentFormatting
+    disabled-checks:
+      - hugeParam
+      - rangeValCopy
+      - paramTypeCombine
+      - unnamedResult
+      - httpNoBody
+      - sprintfQuotedString
+
+  goconst:
+    min-len: 3
+    min-occurrences: 2
+    ignore-tests: false
+    numbers: true
+    ignore-calls: false
+
+  dupl:
+    threshold: 150
+
+  funlen:
+    lines: 120
+    statements: 60
+
+  nestif:
+    min-complexity: 8
+
+  maintidx:
+    under: 30
+
+  cyclop:
+    max-complexity: 15
+    package-average: 10
+
+  gocyclo:
+    min-complexity: 15
+
+  gocognit:
+    min-complexity: 12
+
+  nolintlint:
+    require-explanation: true
+    require-specific: true
+    allow-unused: false
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

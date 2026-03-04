@@ -1,0 +1,4 @@
+version: 1
+exclude_globs:
+  - "**/*_test.go"
+entries: []
