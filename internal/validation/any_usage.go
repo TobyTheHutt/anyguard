@@ -18,6 +18,12 @@ import (
 
 const anyguardLinter = "anyguard"
 
+const (
+	rootWildcardSuffix = "/..."
+	rootAllPattern     = "..."
+	anyTokenMarker     = "<<ANY>>"
+)
+
 var nolintDirectiveRE = regexp.MustCompile(`(?i)\bnolint(?::([a-z0-9_,-]+))?`)
 
 // Error represents a single disallowed `any` usage.
@@ -52,11 +58,13 @@ func LoadAnyAllowlist(listPath string) (AnyAllowlist, error) {
 	}
 
 	var allowlist AnyAllowlist
-	if err := yaml.Unmarshal(data, &allowlist); err != nil {
-		return AnyAllowlist{}, fmt.Errorf("parse any allowlist: %w", err)
+	unmarshalErr := yaml.Unmarshal(data, &allowlist)
+	if unmarshalErr != nil {
+		return AnyAllowlist{}, fmt.Errorf("parse any allowlist: %w", unmarshalErr)
 	}
-	if err := validateAllowlist(&allowlist); err != nil {
-		return AnyAllowlist{}, err
+	validateErr := validateAllowlist(&allowlist)
+	if validateErr != nil {
+		return AnyAllowlist{}, validateErr
 	}
 	return allowlist, nil
 }
@@ -73,7 +81,7 @@ func ValidateAnyUsageFromFile(listPath, baseDir string, roots []string) ([]Error
 // ValidateAnyUsage reports any-type usages not covered by the provided allowlist.
 func ValidateAnyUsage(allowlist AnyAllowlist, baseDir string, roots []string) ([]Error, error) {
 	if len(roots) == 0 {
-		return nil, errors.New("no roots provided for any usage validation")
+		return nil, errors.New(errNoRootsProvided)
 	}
 	if err := validateAllowlist(&allowlist); err != nil {
 		return nil, err
@@ -87,17 +95,17 @@ func ValidateAnyUsage(allowlist AnyAllowlist, baseDir string, roots []string) ([
 	index := buildAllowlistIndex(allowlist)
 	violations := make([]Error, 0)
 	for _, root := range roots {
-		rootPath, skipRoot, err := resolveRootPath(baseAbs, root)
-		if err != nil {
-			return nil, err
+		rootPath, skipRoot, rootErr := resolveRootPath(baseAbs, root)
+		if rootErr != nil {
+			return nil, rootErr
 		}
 		if skipRoot {
 			continue
 		}
 
-		rootViolations, err := validateRoot(rootPath, baseAbs, allowlist.ExcludeGlobs, index)
-		if err != nil {
-			return nil, err
+		rootViolations, validateErr := validateRoot(rootPath, baseAbs, allowlist.ExcludeGlobs, index)
+		if validateErr != nil {
+			return nil, validateErr
 		}
 		violations = append(violations, rootViolations...)
 	}
@@ -107,26 +115,10 @@ func ValidateAnyUsage(allowlist AnyAllowlist, baseDir string, roots []string) ([
 
 func validateRoot(rootPath, baseAbs string, globs []string, index anyAllowlistIndex) ([]Error, error) {
 	violations := make([]Error, 0)
-	walkErr := filepath.WalkDir(rootPath, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || !strings.HasSuffix(path, ".go") {
-			return nil
-		}
-
-		rel, err := filepath.Rel(baseAbs, path)
-		if err != nil {
-			return err
-		}
-		rel = normalizePath(rel)
-		if shouldExclude(rel, globs) || index.allowAll[rel] {
-			return nil
-		}
-
-		fileViolations, err := validateAnyFile(path, rel, index)
-		if err != nil {
-			return err
+	walkErr := filepath.WalkDir(rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
+		fileViolations, processErr := processRootFile(path, entry, walkErr, baseAbs, globs, index)
+		if processErr != nil {
+			return processErr
 		}
 		violations = append(violations, fileViolations...)
 		return nil
@@ -135,6 +127,25 @@ func validateRoot(rootPath, baseAbs string, globs []string, index anyAllowlistIn
 		return nil, walkErr
 	}
 	return violations, nil
+}
+
+func processRootFile(path string, entry fs.DirEntry, walkErr error, baseAbs string, globs []string, index anyAllowlistIndex) ([]Error, error) {
+	if walkErr != nil {
+		return nil, walkErr
+	}
+	if entry.IsDir() || !strings.HasSuffix(path, ".go") {
+		return nil, nil
+	}
+
+	relPath, relErr := filepath.Rel(baseAbs, path)
+	if relErr != nil {
+		return nil, relErr
+	}
+	relPath = normalizePath(relPath)
+	if shouldExclude(relPath, globs) || index.allowAll[relPath] {
+		return nil, nil
+	}
+	return validateAnyFile(path, relPath, index)
 }
 
 func resolveRootPath(baseAbs, root string) (string, bool, error) {
@@ -166,12 +177,12 @@ func normalizeRootValue(root string) string {
 
 	root = filepath.ToSlash(root)
 	switch root {
-	case "...", "./...":
+	case rootAllPattern, DefaultRoots:
 		return "."
 	}
 
-	if strings.HasSuffix(root, "/...") {
-		root = strings.TrimSuffix(root, "/...")
+	if strings.HasSuffix(root, rootWildcardSuffix) {
+		root = strings.TrimSuffix(root, rootWildcardSuffix)
 		if root == "" {
 			return "."
 		}
@@ -585,10 +596,10 @@ func matchGlob(pattern, value string) (bool, error) {
 	value = normalizePath(value)
 
 	escaped := regexp.QuoteMeta(pattern)
-	escaped = strings.ReplaceAll(escaped, `\*\*`, "<<ANY>>")
+	escaped = strings.ReplaceAll(escaped, `\*\*`, anyTokenMarker)
 	escaped = strings.ReplaceAll(escaped, `\*`, `[^/]*`)
 	escaped = strings.ReplaceAll(escaped, `\?`, `[^/]`)
-	escaped = strings.ReplaceAll(escaped, "<<ANY>>", ".*")
+	escaped = strings.ReplaceAll(escaped, anyTokenMarker, ".*")
 
 	expr := "^" + escaped + "$"
 	re, err := regexp.Compile(expr)

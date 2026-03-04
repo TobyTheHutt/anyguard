@@ -8,28 +8,37 @@ import (
 	"golang.org/x/tools/go/analysis/analysistest"
 )
 
+const (
+	testdataSrcDir     = "src"
+	testAllowlistPath  = "allowlist.yaml"
+	testAllowlistEmpty = "allowlist-empty.yaml"
+	testPkgViolations  = "violations"
+	testPkgAllowed     = "allowed"
+	testPkgFiltered    = "filtered"
+)
+
 func TestAnalyzer(t *testing.T) {
 	analyzer := NewAnalyzer()
 	testdata := analysistest.TestData()
-	repoRoot := filepath.Join(testdata, "src")
+	repoRoot := filepath.Join(testdata, testdataSrcDir)
 
-	setAnalyzerFlag(t, analyzer, "allowlist", filepath.Join(testdata, "allowlist.yaml"))
-	setAnalyzerFlag(t, analyzer, "repo-root", repoRoot)
-	setAnalyzerFlag(t, analyzer, "roots", "./...")
+	setAnalyzerFlag(t, analyzer, flagAllowlist, filepath.Join(testdata, testAllowlistPath))
+	setAnalyzerFlag(t, analyzer, flagRepoRoot, repoRoot)
+	setAnalyzerFlag(t, analyzer, flagRoots, DefaultRoots)
 
-	analysistest.Run(t, testdata, analyzer, "violations", "allowed")
+	analysistest.Run(t, testdata, analyzer, testPkgViolations, testPkgAllowed)
 }
 
 func TestAnalyzerRespectsRoots(t *testing.T) {
 	analyzer := NewAnalyzer()
 	testdata := analysistest.TestData()
-	repoRoot := filepath.Join(testdata, "src")
+	repoRoot := filepath.Join(testdata, testdataSrcDir)
 
-	setAnalyzerFlag(t, analyzer, "allowlist", filepath.Join(testdata, "allowlist-empty.yaml"))
-	setAnalyzerFlag(t, analyzer, "repo-root", repoRoot)
-	setAnalyzerFlag(t, analyzer, "roots", "allowed")
+	setAnalyzerFlag(t, analyzer, flagAllowlist, filepath.Join(testdata, testAllowlistEmpty))
+	setAnalyzerFlag(t, analyzer, flagRepoRoot, repoRoot)
+	setAnalyzerFlag(t, analyzer, flagRoots, testPkgAllowed)
 
-	analysistest.Run(t, testdata, analyzer, "filtered")
+	analysistest.Run(t, testdata, analyzer, testPkgFiltered)
 }
 
 func setAnalyzerFlag(t *testing.T, analyzer *analysis.Analyzer, key, value string) {

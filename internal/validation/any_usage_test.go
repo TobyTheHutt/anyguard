@@ -11,6 +11,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	testDirPkg                 = "pkg"
+	testDirAPI                 = "api"
+	testRootAPI                = "pkg/api"
+	testPayloadPath            = "pkg/api/payload.go"
+	testPayloadFile            = "payload.go"
+	testAllowlistFile          = "allowlist.yaml"
+	testWriteAllowlistErrFmt   = "write allowlist: %v"
+	testValidateUsageErrFmt    = "validate usage: %v"
+	testNoViolationsErrFmt     = "expected no violations, got %v"
+	testFooTestPath            = "pkg/api/foo_test.go"
+	testPayloadSource          = "package api\ntype Payload map[string]any\n"
+	testExpectedNormalizeRoots = "."
+)
+
 func TestLoadAnyAllowlistErrors(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.yaml")
 	if _, err := LoadAnyAllowlist(missing); err == nil {
@@ -28,10 +43,10 @@ func TestLoadAnyAllowlistErrors(t *testing.T) {
 
 func TestLoadAnyAllowlistRequiresDescription(t *testing.T) {
 	base := t.TempDir()
-	allowPath := filepath.Join(base, "allowlist.yaml")
+	allowPath := filepath.Join(base, testAllowlistFile)
 	content := "version: 1\nentries:\n  - path: pkg/api/payload.go\n"
 	if err := os.WriteFile(allowPath, []byte(content), 0o600); err != nil {
-		t.Fatalf("write allowlist: %v", err)
+		t.Fatalf(testWriteAllowlistErrFmt, err)
 	}
 
 	if _, err := LoadAnyAllowlist(allowPath); err == nil {
@@ -41,43 +56,43 @@ func TestLoadAnyAllowlistRequiresDescription(t *testing.T) {
 
 func TestValidateAnyUsageFromFile(t *testing.T) {
 	base := t.TempDir()
-	writeFile(t, filepath.Join(base, "pkg", "api", "payload.go"), "package api\ntype Payload map[string]any\n")
+	writeFile(t, apiPath(base, testPayloadFile), testPayloadSource)
 
 	allowlist := AnyAllowlist{
 		Version:      1,
 		ExcludeGlobs: []string{"**/*_test.go"},
 		Entries: []AnyAllowlistEntry{
 			{
-				Path:        "pkg/api/payload.go",
+				Path:        testPayloadPath,
 				Symbols:     []string{"Payload"},
 				Description: "payload boundary",
 			},
 		},
 	}
-	allowPath := filepath.Join(base, "allowlist.yaml")
+	allowPath := filepath.Join(base, testAllowlistFile)
 	writeAllowlist(t, allowPath, allowlist)
 
-	violations, err := ValidateAnyUsageFromFile(allowPath, base, []string{"pkg/api"})
+	violations, err := ValidateAnyUsageFromFile(allowPath, base, []string{testRootAPI})
 	if err != nil {
 		t.Fatalf("validate usage from file: %v", err)
 	}
 	if len(violations) != 0 {
-		t.Fatalf("expected no violations, got %v", violations)
+		t.Fatalf(testNoViolationsErrFmt, violations)
 	}
 }
 
 func TestValidateAnyUsageDetectsViolation(t *testing.T) {
 	base := t.TempDir()
-	writeFile(t, filepath.Join(base, "pkg", "api", "payload.go"), "package api\ntype Payload map[string]any\n")
+	writeFile(t, apiPath(base, testPayloadFile), testPayloadSource)
 
-	violations, err := ValidateAnyUsage(AnyAllowlist{Version: 1}, base, []string{"pkg/api"})
+	violations, err := ValidateAnyUsage(AnyAllowlist{Version: 1}, base, []string{testRootAPI})
 	if err != nil {
-		t.Fatalf("validate usage: %v", err)
+		t.Fatalf(testValidateUsageErrFmt, err)
 	}
 	if len(violations) != 1 {
 		t.Fatalf("expected 1 violation, got %d", len(violations))
 	}
-	if violations[0].File != "pkg/api/payload.go" {
+	if violations[0].File != testPayloadPath {
 		t.Fatalf("unexpected file: %q", violations[0].File)
 	}
 	if violations[0].Line != 2 {
@@ -107,13 +122,13 @@ func TestValidateAnyUsageSupportsNolint(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			base := t.TempDir()
-			writeFile(t, filepath.Join(base, "pkg", "api", "payload.go"), testCase.src)
-			violations, err := ValidateAnyUsage(AnyAllowlist{Version: 1}, base, []string{"pkg/api"})
+			writeFile(t, apiPath(base, testPayloadFile), testCase.src)
+			violations, err := ValidateAnyUsage(AnyAllowlist{Version: 1}, base, []string{testRootAPI})
 			if err != nil {
-				t.Fatalf("validate usage: %v", err)
+				t.Fatalf(testValidateUsageErrFmt, err)
 			}
 			if len(violations) != 0 {
-				t.Fatalf("expected no violations, got %v", violations)
+				t.Fatalf(testNoViolationsErrFmt, violations)
 			}
 		})
 	}
@@ -121,42 +136,42 @@ func TestValidateAnyUsageSupportsNolint(t *testing.T) {
 
 func TestValidateAnyUsageHandlesExcludesAndRoots(t *testing.T) {
 	base := t.TempDir()
-	writeFile(t, filepath.Join(base, "pkg", "api", "payload.go"), "package api\ntype Payload map[string]any\n")
-	writeFile(t, filepath.Join(base, "pkg", "api", "payload_test.go"), "package api\ntype PayloadTest map[string]any\n")
+	writeFile(t, apiPath(base, testPayloadFile), testPayloadSource)
+	writeFile(t, apiPath(base, "payload_test.go"), "package api\ntype PayloadTest map[string]any\n")
 
 	allowlist := AnyAllowlist{
 		Version:      1,
 		ExcludeGlobs: []string{"**/*_test.go"},
 	}
-	violations, err := ValidateAnyUsage(allowlist, base, []string{"./..."})
+	violations, err := ValidateAnyUsage(allowlist, base, []string{DefaultRoots})
 	if err != nil {
-		t.Fatalf("validate usage: %v", err)
+		t.Fatalf(testValidateUsageErrFmt, err)
 	}
 	if len(violations) != 1 {
 		t.Fatalf("expected exactly one violation, got %d", len(violations))
 	}
-	if violations[0].File != "pkg/api/payload.go" {
+	if violations[0].File != testPayloadPath {
 		t.Fatalf("unexpected file in violation: %q", violations[0].File)
 	}
 }
 
 func TestValidateAnyUsageAllowsTypeParamConstraint(t *testing.T) {
 	base := t.TempDir()
-	writeFile(t, filepath.Join(base, "pkg", "api", "generic.go"), "package api\nfunc Use[T any](v T) {}\n")
+	writeFile(t, apiPath(base, "generic.go"), "package api\nfunc Use[T any](v T) {}\n")
 
-	violations, err := ValidateAnyUsage(AnyAllowlist{Version: 1}, base, []string{"pkg/api"})
+	violations, err := ValidateAnyUsage(AnyAllowlist{Version: 1}, base, []string{testRootAPI})
 	if err != nil {
-		t.Fatalf("validate usage: %v", err)
+		t.Fatalf(testValidateUsageErrFmt, err)
 	}
 	if len(violations) != 0 {
-		t.Fatalf("expected no violations, got %v", violations)
+		t.Fatalf(testNoViolationsErrFmt, violations)
 	}
 }
 
 func TestValidateAnyUsageErrorCases(t *testing.T) {
 	base := t.TempDir()
-	writeFile(t, filepath.Join(base, "pkg", "api", "ok.go"), "package api\n")
-	writeFile(t, filepath.Join(base, "pkg", "api", "broken.go"), "package api\nfunc\n")
+	writeFile(t, apiPath(base, "ok.go"), "package api\n")
+	writeFile(t, apiPath(base, "broken.go"), "package api\nfunc\n")
 	plainFile := filepath.Join(base, "plain.go")
 	if err := os.WriteFile(plainFile, []byte("package main\n"), 0o600); err != nil {
 		t.Fatalf("write plain file: %v", err)
@@ -170,7 +185,7 @@ func TestValidateAnyUsageErrorCases(t *testing.T) {
 		{name: "missing roots", roots: nil, wantError: true},
 		{name: "missing path", roots: []string{"does/not/exist"}, wantError: true},
 		{name: "non-directory root", roots: []string{plainFile}, wantError: true},
-		{name: "invalid go file", roots: []string{"pkg/api"}, wantError: true},
+		{name: "invalid go file", roots: []string{testRootAPI}, wantError: true},
 	}
 
 	for _, testCase := range testCases {
@@ -184,7 +199,7 @@ func TestValidateAnyUsageErrorCases(t *testing.T) {
 }
 
 func TestUtilityFunctions(t *testing.T) {
-	if normalizeRootValue("./...") != "." {
+	if normalizeRootValue(DefaultRoots) != testExpectedNormalizeRoots {
 		t.Fatalf("expected ./... to normalize to .")
 	}
 	if normalizeRootValue("pkg/api/...") != "pkg/api" {
@@ -213,13 +228,13 @@ func TestUtilityFunctions(t *testing.T) {
 }
 
 func TestShouldExcludeAndGlobMatch(t *testing.T) {
-	if !shouldExclude("pkg/api/foo_test.go", []string{"**/*_test.go"}) {
+	if !shouldExclude(testFooTestPath, []string{"**/*_test.go"}) {
 		t.Fatalf("expected exclude match")
 	}
 	if shouldExclude("pkg/api/foo.go", []string{"**/*_test.go"}) {
 		t.Fatalf("did not expect exclude match")
 	}
-	ok, err := matchGlob("pkg/**/foo*.go", "pkg/api/foo_test.go")
+	ok, err := matchGlob("pkg/**/foo*.go", testFooTestPath)
 	if err != nil || !ok {
 		t.Fatalf("expected recursive glob match, got ok=%v err=%v", ok, err)
 	}
@@ -255,9 +270,14 @@ func writeAllowlist(t *testing.T, path string, allowlist AnyAllowlist) {
 	if err != nil {
 		t.Fatalf("marshal allowlist: %v", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatalf("write allowlist: %v", err)
+	writeErr := os.WriteFile(path, data, 0o600)
+	if writeErr != nil {
+		t.Fatalf(testWriteAllowlistErrFmt, writeErr)
 	}
+}
+
+func apiPath(base, file string) string {
+	return filepath.Join(base, testDirPkg, testDirAPI, file)
 }
 
 func writeFile(t *testing.T, path, content string) {

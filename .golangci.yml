@@ -7,7 +7,7 @@ run:
   modules-download-mode: readonly
 
 linters:
-  disable-all: true
+  default: none
   enable:
     - govet
     - staticcheck
@@ -37,76 +37,71 @@ linters:
     - contextcheck
     - containedctx
 
-linters-settings:
-  govet:
-    enable:
-      - shadow
-    settings:
-      shadow:
-        strict: true
+  settings:
+    govet:
+      enable:
+        - shadow
+      settings:
+        shadow:
+          strict: true
 
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
 
-  staticcheck:
-    checks:
-      - all
+    staticcheck:
+      checks:
+        - all
 
-  revive:
-    confidence: 0.2
+    revive:
+      confidence: 0.2
 
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - performance
-      - style
-    enabled-checks:
-      - commentedOutCode
-      - commentedOutImport
-      - commentFormatting
-    disabled-checks:
-      - hugeParam
-      - rangeValCopy
-      - paramTypeCombine
-      - unnamedResult
-      - httpNoBody
-      - sprintfQuotedString
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - hugeParam
+        - rangeValCopy
+        - paramTypeCombine
+        - unnamedResult
+        - httpNoBody
+        - sprintfQuotedString
 
-  goconst:
-    min-len: 3
-    min-occurrences: 2
-    ignore-tests: false
-    numbers: true
-    ignore-calls: false
+    goconst:
+      min-len: 3
+      min-occurrences: 2
+      numbers: true
+      ignore-calls: false
 
-  dupl:
-    threshold: 150
+    dupl:
+      threshold: 150
 
-  funlen:
-    lines: 120
-    statements: 60
+    funlen:
+      lines: 120
+      statements: 60
 
-  nestif:
-    min-complexity: 8
+    nestif:
+      min-complexity: 8
 
-  maintidx:
-    under: 30
+    maintidx:
+      under: 30
 
-  cyclop:
-    max-complexity: 15
-    package-average: 10
+    cyclop:
+      max-complexity: 15
+      package-average: 10
 
-  gocyclo:
-    min-complexity: 15
+    gocyclo:
+      min-complexity: 15
 
-  gocognit:
-    min-complexity: 12
+    gocognit:
+      min-complexity: 12
 
-  nolintlint:
-    require-explanation: true
-    require-specific: true
-    allow-unused: false
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
 
 issues:
   max-issues-per-linter: 0

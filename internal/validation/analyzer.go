@@ -19,6 +19,13 @@ const (
 	DefaultAllowlistPath = "internal/ci/any_allowlist.yaml"
 	// DefaultRoots defines the default configured roots to analyze.
 	DefaultRoots = "./..."
+
+	flagAllowlist = "allowlist"
+	flagRoots     = "roots"
+	flagRepoRoot  = "repo-root"
+
+	errNoRootsProvided = "no roots provided for any usage validation"
+	goPathSrcSegment   = "/src/"
 )
 
 // NewAnalyzer constructs a go/analysis analyzer for any-usage validation.
@@ -33,9 +40,9 @@ func NewAnalyzer() *analysis.Analyzer {
 		Run:        cfg.run,
 		ResultType: reflect.TypeOf(analysisResult{}),
 	}
-	analyzer.Flags.StringVar(&cfg.allowlistPath, "allowlist", DefaultAllowlistPath, "path to any usage allowlist YAML")
-	analyzer.Flags.StringVar(&cfg.roots, "roots", DefaultRoots, "comma-separated roots to scan")
-	analyzer.Flags.StringVar(&cfg.repoRoot, "repo-root", "", "repository root (auto-detected when empty)")
+	analyzer.Flags.StringVar(&cfg.allowlistPath, flagAllowlist, DefaultAllowlistPath, "path to any usage allowlist YAML")
+	analyzer.Flags.StringVar(&cfg.roots, flagRoots, DefaultRoots, "comma-separated roots to scan")
+	analyzer.Flags.StringVar(&cfg.repoRoot, flagRepoRoot, "", "repository root (auto-detected when empty)")
 	return analyzer
 }
 
@@ -56,7 +63,7 @@ type analysisResult struct{}
 func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 	roots := splitRoots(cfg.roots)
 	if len(roots) == 0 {
-		return nil, errors.New("no roots provided for any usage validation")
+		return nil, errors.New(errNoRootsProvided)
 	}
 
 	repoRoot, err := cfg.resolveRepoRoot(pass)
@@ -83,9 +90,9 @@ func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 			continue
 		}
 
-		violations, err := validateAnyFile(file.absPath, file.relPath, index)
-		if err != nil {
-			return nil, fmt.Errorf("validate %s: %w", file.relPath, err)
+		violations, validateErr := validateAnyFile(file.absPath, file.relPath, index)
+		if validateErr != nil {
+			return nil, fmt.Errorf("validate %s: %w", file.relPath, validateErr)
 		}
 		reportViolations(pass, file.tokenFile, violations)
 	}
@@ -214,11 +221,11 @@ func isEscapingPath(path string) bool {
 
 func pathFromGoPathSrc(absPath string) (string, bool) {
 	slash := filepath.ToSlash(absPath)
-	idx := strings.Index(slash, "/src/")
+	idx := strings.Index(slash, goPathSrcSegment)
 	if idx == -1 {
 		return "", false
 	}
-	return normalizePath(slash[idx+len("/src/"):]), true
+	return normalizePath(slash[idx+len(goPathSrcSegment):]), true
 }
 
 func normalizeConfiguredRoots(roots []string, repoRoot string) []string {
