@@ -1,0 +1,8 @@
+version: 1
+exclude_globs:
+  - "**/*_test.go"
+entries:
+  - path: allowed/allowed.go
+    symbols:
+      - Payload
+    description: approved payload boundary

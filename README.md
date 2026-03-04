@@ -11,7 +11,7 @@ A Go lint guard that enforces controlled use of the `any` type.
 
 ```bash
 # Example binary usage
-anyguard -roots ./... -allowlist internal/ci/any_allowlist.yaml
+anyguard -allowlist internal/ci/any_allowlist.yaml ./...
 ```
 
 ### Usage
@@ -21,6 +21,11 @@ Flags:
 
   -allowlist   path to allowlist YAML (default: internal/ci/any_allowlist.yaml)
   -roots       comma-separated directories to scan (default: ./...)
+  -repo-root   repository root for path matching (default: auto-detect)
+
+Packages:
+
+  anyguard [flags] [packages]
 ```
 
 ### Behavior
@@ -32,7 +37,7 @@ Flags:
 - Exception metadata is intentionally minimal: the `description` field is required.
 - Exit `0`: no disallowed usage found.
 - Exit `1`: violations or runtime/validation errors.
-- On failure, prints `file:line`, reason, and offending code line.
+- On failure, prints `file:line` and reason (including the offending code line snippet).
 
 ### Development
 

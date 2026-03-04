@@ -1,4 +1,8 @@
 version: 1
 exclude_globs:
   - "**/*_test.go"
-entries: []
+entries:
+  - path: internal/validation/analyzer.go
+    symbols:
+      - analyzerConfig
+    description: go/analysis Run API requires returning `any`
