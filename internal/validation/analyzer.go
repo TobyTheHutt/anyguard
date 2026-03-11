@@ -169,6 +169,11 @@ func collectAnalyzerFiles(pass *analysis.Pass, repoRoot string, roots []string) 
 		return nil, errors.New("no usable roots after normalization")
 	}
 
+	pkgPath := ""
+	if pass.Pkg != nil {
+		pkgPath = pass.Pkg.Path()
+	}
+
 	files := make([]analyzerFile, 0, len(pass.Files))
 	for _, file := range pass.Files {
 		pos := pass.Fset.PositionFor(file.Package, false)
@@ -176,7 +181,7 @@ func collectAnalyzerFiles(pass *analysis.Pass, repoRoot string, roots []string) 
 			continue
 		}
 
-		relPath, err := relativePath(repoRoot, pos.Filename, pass.Pkg.Path())
+		relPath, err := relativePath(repoRoot, pos.Filename, pkgPath)
 		if err != nil {
 			return nil, fmt.Errorf("compute relative path for %s: %w", pos.Filename, err)
 		}
@@ -295,6 +300,29 @@ func reportViolations(pass *analysis.Pass, file *token.File, violations []Error)
 		if violation.Code != "" {
 			message = message + " (code: " + violation.Code + ")"
 		}
-		pass.Reportf(file.LineStart(violation.Line), "%s", message)
+		pos := file.LineStart(violation.Line)
+		pass.Report(analysis.Diagnostic{
+			Pos:     pos,
+			End:     lineEnd(file, violation.Line, pos),
+			Message: message,
+		})
 	}
+}
+
+func lineEnd(file *token.File, line int, pos token.Pos) token.Pos {
+	if line < file.LineCount() {
+		nextLineStart := file.LineStart(line + 1)
+		if nextLineStart > pos {
+			return nextLineStart - 1
+		}
+	}
+
+	if size := file.Size(); size > 0 {
+		end := file.Pos(size)
+		if end > pos {
+			return end
+		}
+	}
+
+	return pos
 }

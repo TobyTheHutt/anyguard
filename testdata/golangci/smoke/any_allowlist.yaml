@@ -1,0 +1,6 @@
+version: 1
+entries:
+  - path: pkg/ok/ok.go
+    symbols:
+      - Payload
+    description: allowed boundary type for smoke tests

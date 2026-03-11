@@ -30,3 +30,7 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# CI smoke-test generated binaries
+testdata/golangci/custom-gcl
+testdata/golangci/custom-gcl.exe

@@ -51,3 +51,24 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: latest
+
+  golangci-module-plugin-smoke:
+    name: Golangci Module Plugin Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.24.x"
+
+      - name: Install pinned golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0
+
+      - name: Build custom golangci-lint binary
+        run: ./scripts/ci/build-custom-gcl.sh
+
+      - name: Run module plugin smoke test
+        run: ./scripts/ci/run-golangci-plugin-smoke.sh

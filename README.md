@@ -49,6 +49,14 @@ go test ./...
 golangci-lint run
 ```
 
+### golangci-lint module plugin
+
+`anyguard` can be consumed as a golangci-lint module plugin.
+
+- Stable plugin import path: `github.com/tobythehutt/anyguard/plugin`
+- Plugin name in `.golangci.yml`: `anyguard`
+- Integration docs and examples: `docs/golangci-lint/README.md`
+
 ### License
 
 Apache-2.0
