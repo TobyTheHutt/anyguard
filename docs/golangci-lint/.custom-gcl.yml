@@ -1,5 +1,5 @@
 # Build a custom golangci-lint binary that bundles anyguard as a module plugin.
-version: v2.5.0
+version: v2.7.2
 name: custom-gcl
 plugins:
   - module: github.com/tobythehutt/anyguard

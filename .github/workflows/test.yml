@@ -65,7 +65,7 @@ jobs:
           go-version: "1.24.x"
 
       - name: Install pinned golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.7.2
 
       - name: Build custom golangci-lint binary
         env:
