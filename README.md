@@ -36,8 +36,10 @@ Packages:
 - Supports file-level and symbol-level exceptions, exclude globs, and specific `//nolint` instructions.
 - Exception metadata is intentionally minimal: the `description` field is required.
 - Exit `0`: no disallowed usage found.
-- Exit `1`: violations or runtime/validation errors.
-- On failure, prints `file:line` and reason (including the offending code line snippet).
+- Exit `3`: one or more disallowed usages were reported (go/analysis diagnostics present).
+- Exit `1`: analyzer/runtime/validation error.
+- Exit `2`: invalid CLI usage or flag parsing error.
+- On diagnostics, prints `file:line:column` and reason (including the offending code line snippet).
 
 ### Development
 
