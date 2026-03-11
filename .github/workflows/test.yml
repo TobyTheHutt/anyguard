@@ -68,7 +68,7 @@ jobs:
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0
 
       - name: Build custom golangci-lint binary
-        run: ./scripts/ci/build-custom-gcl.sh
+        run: bash ./scripts/ci/build-custom-gcl.sh
 
       - name: Run module plugin smoke test
-        run: ./scripts/ci/run-golangci-plugin-smoke.sh
+        run: bash ./scripts/ci/run-golangci-plugin-smoke.sh
