@@ -1,16 +1,15 @@
 # anyguard
 
-A Go lint guard that enforces controlled use of the `any` type.
+A Go analyzer and CLI that controls where `any` can be used.
 
-### Motivation
+### Why
 
-`any` can be useful at boundaries, but unmanaged usage spreads quickly and weakens type safety.
-`anyguard` keeps usage explicit, reviewed, and auditable for CI and delivery pipelines.
+`any` is useful at boundaries but unchecked usage spreads quickly and weakens type safety.  
+`anyguard` enforces an allowlist so usage stays intentional.
 
 ### Get Started
 
 ```bash
-# Example binary usage
 anyguard -allowlist internal/ci/any_allowlist.yaml ./...
 ```
 
@@ -31,15 +30,15 @@ Packages:
 ### Behavior
 
 - Scans `.go` files under configured roots.
-- Parses AST (not raw text), so findings are true type-position usages of `any`.
+- Parses AST and reports true type-position usage of `any`.
 - Compares findings against an allowlist.
 - Supports file-level and symbol-level exceptions, exclude globs, and specific `//nolint` instructions.
-- Exception metadata is intentionally minimal: the `description` field is required.
+- Exception metadata is minimal. `description` is required.
 - Exit `0`: no disallowed usage found.
-- Exit `3`: one or more disallowed usages were reported (go/analysis diagnostics present).
+- Exit `3`: one or more disallowed usages were reported.
 - Exit `1`: analyzer/runtime/validation error.
 - Exit `2`: invalid CLI usage or flag parsing error.
-- On diagnostics, prints `file:line:column` and reason (including the offending code line snippet).
+- On diagnostics, prints `file:line:column` and a reason.
 
 ### Development
 
@@ -51,13 +50,22 @@ go test ./...
 golangci-lint run
 ```
 
-### golangci-lint module plugin
+### golangci-lint integration
 
-`anyguard` can be consumed as a golangci-lint module plugin.
+#### module plugin
+
+`anyguard` can run as a golangci-lint module plugin.
 
 - Stable plugin import path: `github.com/tobythehutt/anyguard/plugin`
 - Plugin name in `.golangci.yml`: `anyguard`
 - Integration docs and examples: `docs/golangci-lint/README.md`
+
+#### core integration
+
+For direct integration into `golangci-lint`, import the public analyzer entrypoint.
+
+- Module path: `github.com/tobythehutt/anyguard`
+- Analyzer constructor: `anyguard.NewAnalyzer()`
 
 ### License
 

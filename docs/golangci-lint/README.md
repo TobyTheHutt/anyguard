@@ -3,19 +3,19 @@
 ## Stable plugin entrypoint
 
 - Module path: `github.com/tobythehutt/anyguard`
-- Import path: `github.com/tobythehutt/anyguard/plugin`
-- Plugin name in `.golangci.yml`: `anyguard`
+- Plugin import path: `github.com/tobythehutt/anyguard/plugin`
+- Linter name in `.golangci.yml`: `anyguard`
 
-## Build custom golangci-lint
+## Build a custom golangci-lint
 
 1. Copy `docs/golangci-lint/.custom-gcl.yml` to your project root as `.custom-gcl.yml`.
-2. Build the custom binary:
+2. Build the binary:
 
 ```bash
 golangci-lint custom
 ```
 
-This generates `./custom-gcl` by default.
+This creates `./custom-gcl` by default.
 
 ## Enable the linter in `.golangci.yml`
 
@@ -42,8 +42,8 @@ linters:
 
 ## Supported settings
 
-- `allowlist` (string): path to the YAML allowlist file. Default: `internal/ci/any_allowlist.yaml`.
-- `roots` (string or list): roots to analyze. Default: `./...`.
+- `allowlist` (string): path to the YAML allowlist file. Default is `internal/ci/any_allowlist.yaml`.
+- `roots` (string or list): roots to analyze. Default is `./...`.
 - `repo-root` (string): optional repository root override for path resolution.
 
 ## Run
@@ -54,7 +54,7 @@ linters:
 
 ## Release and version pinning
 
-- Keep `plugins[].version` pinned to a released tag (for example `v0.2.0`).
+- Keep `plugins[].version` pinned to a released tag such as `v0.2.0`.
 - Update the pinned version only after a corresponding module tag/release is published.
-- Module-plugin support starts with `v0.2.0`; do not pin below this version.
+- Module plugin support starts with `v0.2.0`. Do not pin below this version.
 - The plugin entrypoint import path `github.com/tobythehutt/anyguard/plugin` is stable and versioned with module tags.
