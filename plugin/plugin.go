@@ -16,8 +16,11 @@ const (
 	Name = validation.AnalyzerName
 )
 
-func init() {
+var _ = registerPlugin()
+
+func registerPlugin() int {
 	register.Plugin(Name, New)
+	return 0
 }
 
 // Settings defines the module-plugin configuration accepted from .golangci.yml.
