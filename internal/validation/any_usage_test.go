@@ -1,11 +1,11 @@
 package validation
 
 import (
-	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -157,7 +157,7 @@ func TestValidateAnyUsageHandlesExcludesAndRoots(t *testing.T) {
 
 func TestValidateAnyUsageAllowsTypeParamConstraint(t *testing.T) {
 	base := t.TempDir()
-	writeFile(t, apiPath(base, "generic.go"), "package api\nfunc Use[T any](v T) {}\n")
+	writeFile(t, apiPath(base, "generic.go"), "package api\nfunc Use[T any](v T) {}\ntype Box[T []any] struct{}\n")
 
 	violations, err := ValidateAnyUsage(AnyAllowlist{Version: 1}, base, []string{testRootAPI})
 	if err != nil {
@@ -240,28 +240,196 @@ func TestShouldExcludeAndGlobMatch(t *testing.T) {
 	}
 }
 
-func TestTypeHelpers(t *testing.T) {
-	ident := &ast.Ident{Name: "any"}
-	if got := isTypeIdent([]ast.Node{&ast.MapType{Value: ident}, ident}); !got {
-		t.Fatalf("expected map value context to be type context")
+func TestCollectAnyUsagesCapturesSupportedSlotMetadata(t *testing.T) {
+	src := `package p
+
+type Payload map[any][]any
+type Alias = any
+var Pair, Other any
+var Top = func(arg any) []any { return nil }
+
+type Holder[T any] struct{}
+func (h *Holder[any]) Run() {}
+
+func Use(value any) {
+	var local map[string]any
+	type Hidden = any
+	_ = any(value)
+	_ = values[any]
+	_ = Box[int, any]{}
+	_ = value.(any)
+}
+
+func Match(value any) {
+	switch value.(type) {
+	case any:
+		_ = any(value)
 	}
-	if got := isTypeIdent([]ast.Node{ident}); got {
-		t.Fatalf("did not expect short stack to be type context")
+}
+
+type Ignored = (any)
+
+func Generic[T []any](v T) {}
+`
+
+	got := collectUsageSummaries(t, src)
+	want := []usageSummary{
+		{category: anyCategoryMapTypeKey, owner: "Payload", line: 3},
+		{category: anyCategoryArrayTypeElt, owner: "Payload", line: 3},
+		{category: anyCategoryTypeSpecType, owner: "Alias", line: 4},
+		{category: anyCategoryValueSpecType, owner: "Pair", line: 5},
+		{category: anyCategoryFieldType, owner: "Top", line: 6},
+		{category: anyCategoryArrayTypeElt, owner: "Top", line: 6},
+		{category: anyCategoryIndexExprIndex, owner: "Holder", line: 9},
+		{category: anyCategoryFieldType, owner: "Use", line: 11},
+		{category: anyCategoryMapTypeValue, owner: "Use", line: 12},
+		{category: anyCategoryTypeSpecType, owner: "Use", line: 13},
+		{category: anyCategoryCallExprFun, owner: "Use", line: 14},
+		{category: anyCategoryIndexExprIndex, owner: "Use", line: 15},
+		{category: anyCategoryIndexListIndex, owner: "Use", line: 16},
+		{category: anyCategoryTypeAssertType, owner: "Use", line: 17},
+		{category: anyCategoryFieldType, owner: "Match", line: 20},
+		{category: anyCategoryCallExprFun, owner: "Match", line: 23},
 	}
-	if got := receiverTypeName(&ast.StarExpr{X: &ast.Ident{Name: "Host"}}); got != "Host" {
-		t.Fatalf("unexpected receiver name: %q", got)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected any usages:\ngot: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestCollectAnyUsagesTraversesSupportedSlotsInStatements(t *testing.T) {
+	src := `package p
+
+type Record struct {
+	Field *any
+}
+
+type Service interface {
+	Handle(any) []any
+}
+
+func Explore(value any, ch chan any, values []any) {
+label:
+	values[any(value)]++
+	ch <- any(value)
+	go any(value)
+	defer any(value)
+
+	if start := any(value); any(value) != nil {
+		_ = map[string]any{"k": any(value)}
+	} else {
+		_ = struct{ Field any }{Field: any(value)}
 	}
 
-	src := "package p\ntype Box struct{}\nfunc (b *Box) Run(v any) {}\n"
+	holder := struct{ values []int }{values: nil}
+	switch any(value) {
+	case any(value):
+		_ = holder.values[any(value)]
+	}
+
+	select {
+	case ch <- any(value):
+	default:
+		_ = values[any(value):any(value):any(value)]
+	}
+
+	for index := any(value); any(value) != nil; index = any(value) {
+		_ = index
+	}
+
+	for _, item := range any(value) {
+		_ = item
+	}
+
+	if true {
+		goto label
+	}
+}
+`
+
+	got := collectUsageSummaries(t, src)
+	want := []usageSummary{
+		{category: anyCategoryStarExprX, owner: "Record", line: 4},
+		{category: anyCategoryFieldType, owner: "Service", line: 8},
+		{category: anyCategoryArrayTypeElt, owner: "Service", line: 8},
+		{category: anyCategoryFieldType, owner: "Explore", line: 11},
+		{category: anyCategoryChanTypeValue, owner: "Explore", line: 11},
+		{category: anyCategoryArrayTypeElt, owner: "Explore", line: 11},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 13},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 14},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 15},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 16},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 18},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 18},
+		{category: anyCategoryMapTypeValue, owner: "Explore", line: 19},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 19},
+		{category: anyCategoryFieldType, owner: "Explore", line: 21},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 21},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 25},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 26},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 27},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 31},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 33},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 33},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 33},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 36},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 36},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 36},
+		{category: anyCategoryCallExprFun, owner: "Explore", line: 40},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected statement traversal usages:\ngot: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestValidateAnyUsageUsesEnclosingFunctionOwnerForLocalDeclarations(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, apiPath(base, testPayloadFile), "package api\nfunc Use() {\n\ttype Hidden = any\n\tvar local map[string]any\n\t_ = func(v any) {}\n}\n")
+
+	allowlist := AnyAllowlist{
+		Version: 1,
+		Entries: []AnyAllowlistEntry{
+			{
+				Path:        testPayloadPath,
+				Symbols:     []string{"Use"},
+				Description: "allow local function-owned findings",
+			},
+		},
+	}
+
+	violations, err := ValidateAnyUsage(allowlist, base, []string{testRootAPI})
+	if err != nil {
+		t.Fatalf(testValidateUsageErrFmt, err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf(testNoViolationsErrFmt, violations)
+	}
+}
+
+type usageSummary struct {
+	category anyUsageCategory
+	owner    string
+	line     int
+}
+
+func collectUsageSummaries(t *testing.T, src string) []usageSummary {
+	t.Helper()
+
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "sample.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse file: %v", err)
 	}
-	ranges := buildSymbolRanges(file)
-	if symbol := symbolForPos(ranges, token.Pos(1)); symbol != "" {
-		t.Fatalf("expected no symbol at beginning, got %q", symbol)
+
+	usages := collectAnyUsages(file)
+	summaries := make([]usageSummary, 0, len(usages))
+	for _, usage := range usages {
+		summaries = append(summaries, usageSummary{
+			category: usage.category,
+			owner:    usage.owner,
+			line:     fset.Position(usage.pos).Line,
+		})
 	}
+	return summaries
 }
 
 func writeAllowlist(t *testing.T, path string, allowlist AnyAllowlist) {

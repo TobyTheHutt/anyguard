@@ -295,10 +295,8 @@ func validateAnyFile(path, relPath string, index anyAllowlistIndex) ([]Error, er
 		return nil, err
 	}
 
-	typeParamRanges := collectTypeParamRanges(file)
-	symbolRanges := buildSymbolRanges(file)
 	nolintLines := collectNolintLines(file, fset)
-	uses := collectAnyUsages(file, typeParamRanges)
+	uses := collectAnyUsages(file)
 	if len(uses) == 0 {
 		return nil, nil
 	}
@@ -311,8 +309,7 @@ func validateAnyFile(path, relPath string, index anyAllowlistIndex) ([]Error, er
 			continue
 		}
 
-		symbol := symbolForPos(symbolRanges, usage.pos)
-		if index.isAllowed(relPath, symbol) {
+		if index.isAllowed(relPath, usage.owner) {
 			continue
 		}
 
@@ -379,179 +376,385 @@ func isSuppressedByNolint(line int, lines map[int]struct{}) bool {
 	return ok
 }
 
-type typeParamRange struct {
-	start token.Pos
-	end   token.Pos
-}
+type anyUsageCategory string
 
-func collectTypeParamRanges(file *ast.File) []typeParamRange {
-	ranges := make([]typeParamRange, 0)
-	ast.Inspect(file, func(node ast.Node) bool {
-		switch n := node.(type) {
-		case *ast.FuncType:
-			ranges = append(ranges, typeParamRanges(n.TypeParams)...)
-		case *ast.TypeSpec:
-			ranges = append(ranges, typeParamRanges(n.TypeParams)...)
-		}
-		return true
-	})
-	return ranges
-}
-
-func typeParamRanges(fields *ast.FieldList) []typeParamRange {
-	if fields == nil {
-		return nil
-	}
-
-	ranges := make([]typeParamRange, 0, len(fields.List))
-	for _, field := range fields.List {
-		if field == nil || field.Type == nil {
-			continue
-		}
-		ranges = append(ranges, typeParamRange{
-			start: field.Type.Pos(),
-			end:   field.Type.End(),
-		})
-	}
-	return ranges
-}
+const (
+	anyCategoryFieldType      anyUsageCategory = "*ast.Field.Type"
+	anyCategoryValueSpecType  anyUsageCategory = "*ast.ValueSpec.Type"
+	anyCategoryTypeSpecType   anyUsageCategory = "*ast.TypeSpec.Type"
+	anyCategoryTypeAssertType anyUsageCategory = "*ast.TypeAssertExpr.Type"
+	anyCategoryArrayTypeElt   anyUsageCategory = "*ast.ArrayType.Elt"
+	anyCategoryMapTypeKey     anyUsageCategory = "*ast.MapType.Key"
+	anyCategoryMapTypeValue   anyUsageCategory = "*ast.MapType.Value"
+	anyCategoryChanTypeValue  anyUsageCategory = "*ast.ChanType.Value"
+	anyCategoryStarExprX      anyUsageCategory = "*ast.StarExpr.X"
+	anyCategoryEllipsisElt    anyUsageCategory = "*ast.Ellipsis.Elt"
+	anyCategoryCallExprFun    anyUsageCategory = "*ast.CallExpr.Fun"
+	anyCategoryIndexExprIndex anyUsageCategory = "*ast.IndexExpr.Index"
+	anyCategoryIndexListIndex anyUsageCategory = "*ast.IndexListExpr.Indices"
+)
 
 type anyUsage struct {
-	pos token.Pos
+	category anyUsageCategory
+	owner    string
+	pos      token.Pos
 }
 
-func collectAnyUsages(file *ast.File, constraints []typeParamRange) []anyUsage {
-	uses := make([]anyUsage, 0)
-	stack := make([]ast.Node, 0)
-	ast.Inspect(file, func(node ast.Node) bool {
-		if node == nil {
-			if len(stack) > 0 {
-				stack = stack[:len(stack)-1]
-			}
-			return true
-		}
-
-		stack = append(stack, node)
-		ident, ok := node.(*ast.Ident)
-		if ok && ident.Name == "any" && isTypeIdent(stack) && !isInTypeParamRange(ident.Pos(), constraints) {
-			uses = append(uses, anyUsage{pos: ident.Pos()})
-		}
-		return true
-	})
-	return uses
+// anyUsageCollector records findings only from explicitly supported AST slots.
+type anyUsageCollector struct {
+	usages []anyUsage
 }
 
-func isInTypeParamRange(pos token.Pos, ranges []typeParamRange) bool {
-	for _, scope := range ranges {
-		if pos >= scope.start && pos <= scope.end {
-			return true
-		}
+func collectAnyUsages(file *ast.File) []anyUsage {
+	collector := anyUsageCollector{
+		usages: make([]anyUsage, 0),
 	}
-	return false
+	collector.inspectFile(file)
+	return collector.usages
 }
 
-func isTypeIdent(stack []ast.Node) bool {
-	if len(stack) < 2 {
-		return false
+func (collector *anyUsageCollector) inspectFile(file *ast.File) {
+	if file == nil {
+		return
 	}
-
-	parent := stack[len(stack)-2]
-	child := stack[len(stack)-1]
-	if isCompositeTypeContext(parent, child) {
-		return true
-	}
-	if isDeclarationTypeContext(parent, child) {
-		return true
-	}
-	return isIndexTypeContext(parent, child)
-}
-
-func isCompositeTypeContext(parent, child ast.Node) bool {
-	switch n := parent.(type) {
-	case *ast.ArrayType:
-		return n.Elt == child
-	case *ast.MapType:
-		return n.Key == child || n.Value == child
-	case *ast.ChanType:
-		return n.Value == child
-	case *ast.StarExpr:
-		return n.X == child
-	case *ast.Ellipsis:
-		return n.Elt == child
-	default:
-		return false
-	}
-}
-
-func isDeclarationTypeContext(parent, child ast.Node) bool {
-	switch n := parent.(type) {
-	case *ast.Field:
-		return n.Type == child
-	case *ast.ValueSpec:
-		return n.Type == child
-	case *ast.TypeSpec:
-		return n.Type == child
-	case *ast.TypeAssertExpr:
-		return n.Type == child
-	case *ast.CallExpr:
-		return n.Fun == child
-	default:
-		return false
-	}
-}
-
-func isIndexTypeContext(parent, child ast.Node) bool {
-	switch n := parent.(type) {
-	case *ast.IndexExpr:
-		return n.Index == child
-	case *ast.IndexListExpr:
-		for _, index := range n.Indices {
-			if index == child {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-type symbolRange struct {
-	name  string
-	start token.Pos
-	end   token.Pos
-}
-
-func buildSymbolRanges(file *ast.File) []symbolRange {
-	ranges := make([]symbolRange, 0)
 	for _, decl := range file.Decls {
-		switch node := decl.(type) {
-		case *ast.GenDecl:
-			ranges = append(ranges, symbolRangesForSpec(node.Specs)...)
-		case *ast.FuncDecl:
-			name := node.Name.Name
-			if node.Recv != nil && len(node.Recv.List) > 0 {
-				if recv := receiverTypeName(node.Recv.List[0].Type); recv != "" {
-					name = recv
-				}
-			}
-			ranges = append(ranges, symbolRange{name: name, start: node.Pos(), end: node.End()})
-		}
+		collector.inspectTopLevelDecl(decl)
 	}
-	return ranges
 }
 
-func symbolRangesForSpec(specs []ast.Spec) []symbolRange {
-	ranges := make([]symbolRange, 0)
-	for _, spec := range specs {
-		switch s := spec.(type) {
-		case *ast.TypeSpec:
-			ranges = append(ranges, symbolRange{name: s.Name.Name, start: s.Pos(), end: s.End()})
-		case *ast.ValueSpec:
-			for _, name := range s.Names {
-				ranges = append(ranges, symbolRange{name: name.Name, start: s.Pos(), end: s.End()})
-			}
+func (collector *anyUsageCollector) inspectTopLevelDecl(decl ast.Decl) {
+	switch node := decl.(type) {
+	case *ast.GenDecl:
+		for _, spec := range node.Specs {
+			collector.inspectTopLevelSpec(spec)
+		}
+	case *ast.FuncDecl:
+		owner := funcDeclOwner(node)
+		collector.inspectReceiverList(node.Recv, owner)
+		collector.inspectFuncType(node.Type, owner)
+		collector.inspectNode(node.Body, owner)
+	}
+}
+
+func (collector *anyUsageCollector) inspectLocalDecl(decl ast.Decl, owner string) {
+	genDecl, ok := decl.(*ast.GenDecl)
+	if !ok {
+		return
+	}
+	for _, spec := range genDecl.Specs {
+		collector.inspectLocalSpec(spec, owner)
+	}
+}
+
+func (collector *anyUsageCollector) inspectTopLevelSpec(spec ast.Spec) {
+	switch node := spec.(type) {
+	case *ast.TypeSpec:
+		collector.visitSupportedSlot(anyCategoryTypeSpecType, node.Name.Name, node.Type)
+	case *ast.ValueSpec:
+		owner := valueSpecOwner(node)
+		collector.visitSupportedSlot(anyCategoryValueSpecType, owner, node.Type)
+		collector.inspectExprs(node.Values, owner)
+	}
+}
+
+func (collector *anyUsageCollector) inspectLocalSpec(spec ast.Spec, owner string) {
+	switch node := spec.(type) {
+	case *ast.TypeSpec:
+		collector.visitSupportedSlot(anyCategoryTypeSpecType, owner, node.Type)
+	case *ast.ValueSpec:
+		collector.visitSupportedSlot(anyCategoryValueSpecType, owner, node.Type)
+		collector.inspectExprs(node.Values, owner)
+	}
+}
+
+func (collector *anyUsageCollector) inspectFuncType(funcType *ast.FuncType, owner string) {
+	if funcType == nil {
+		return
+	}
+	collector.inspectFieldList(funcType.Params, owner)
+	collector.inspectFieldList(funcType.Results, owner)
+}
+
+func (collector *anyUsageCollector) inspectReceiverList(receivers *ast.FieldList, owner string) {
+	if receivers == nil {
+		return
+	}
+	for _, field := range receivers.List {
+		if field == nil {
+			continue
+		}
+		collector.inspectNode(field.Type, owner)
+	}
+}
+
+func (collector *anyUsageCollector) inspectFieldList(fields *ast.FieldList, owner string) {
+	if fields == nil {
+		return
+	}
+	for _, field := range fields.List {
+		if field == nil {
+			continue
+		}
+		collector.visitSupportedSlot(anyCategoryFieldType, owner, field.Type)
+	}
+}
+
+func (collector *anyUsageCollector) inspectExprs(exprs []ast.Expr, owner string) {
+	for _, expr := range exprs {
+		collector.inspectNode(expr, owner)
+	}
+}
+
+func (collector *anyUsageCollector) inspectStmts(stmts []ast.Stmt, owner string) {
+	for _, stmt := range stmts {
+		collector.inspectNode(stmt, owner)
+	}
+}
+
+func (collector *anyUsageCollector) visitSupportedSlot(category anyUsageCategory, owner string, expr ast.Expr) {
+	if expr == nil {
+		return
+	}
+	ident, ok := expr.(*ast.Ident)
+	if ok && ident.Name == "any" {
+		collector.usages = append(collector.usages, anyUsage{
+			category: category,
+			owner:    owner,
+			pos:      ident.Pos(),
+		})
+	}
+	collector.inspectNode(expr, owner)
+}
+
+func (collector *anyUsageCollector) inspectNode(node ast.Node, owner string) {
+	if node == nil {
+		return
+	}
+	ast.Inspect(node, func(current ast.Node) bool {
+		return collector.inspectCurrentNode(current, owner)
+	})
+}
+
+func (collector *anyUsageCollector) inspectCurrentNode(current ast.Node, owner string) bool {
+	if current == nil {
+		return false
+	}
+	if collector.inspectLeafNode(current) {
+		return false
+	}
+	if collector.inspectDeclNode(current, owner) {
+		return false
+	}
+	if collector.inspectTypeNode(current, owner) {
+		return false
+	}
+	if collector.inspectExprNode(current, owner) {
+		return false
+	}
+	if collector.inspectSimpleStmtNode(current, owner) {
+		return false
+	}
+	if collector.inspectControlStmtNode(current, owner) {
+		return false
+	}
+	return true
+}
+
+func (collector *anyUsageCollector) inspectLeafNode(node ast.Node) bool {
+	switch node.(type) {
+	case *ast.BadDecl, *ast.BadExpr, *ast.BadStmt, *ast.BasicLit, *ast.BranchStmt, *ast.EmptyStmt, *ast.Ident:
+		return true
+	default:
+		return false
+	}
+}
+
+func (collector *anyUsageCollector) inspectDeclNode(node ast.Node, owner string) bool {
+	genDecl, ok := node.(*ast.GenDecl)
+	if !ok {
+		return false
+	}
+	collector.inspectLocalDecl(genDecl, owner)
+	return true
+}
+
+func (collector *anyUsageCollector) inspectTypeNode(node ast.Node, owner string) bool {
+	switch typed := node.(type) {
+	case *ast.FuncType:
+		collector.inspectFuncType(typed, owner)
+	case *ast.FuncLit:
+		collector.inspectFuncType(typed.Type, owner)
+		collector.inspectNode(typed.Body, owner)
+	case *ast.StructType:
+		collector.inspectFieldList(typed.Fields, owner)
+	case *ast.InterfaceType:
+		collector.inspectFieldList(typed.Methods, owner)
+	case *ast.ArrayType:
+		collector.inspectNode(typed.Len, owner)
+		collector.visitSupportedSlot(anyCategoryArrayTypeElt, owner, typed.Elt)
+	case *ast.MapType:
+		collector.visitSupportedSlot(anyCategoryMapTypeKey, owner, typed.Key)
+		collector.visitSupportedSlot(anyCategoryMapTypeValue, owner, typed.Value)
+	case *ast.ChanType:
+		collector.visitSupportedSlot(anyCategoryChanTypeValue, owner, typed.Value)
+	case *ast.StarExpr:
+		collector.visitSupportedSlot(anyCategoryStarExprX, owner, typed.X)
+	case *ast.Ellipsis:
+		collector.visitSupportedSlot(anyCategoryEllipsisElt, owner, typed.Elt)
+	default:
+		return false
+	}
+	return true
+}
+
+func (collector *anyUsageCollector) inspectExprNode(node ast.Node, owner string) bool {
+	switch typed := node.(type) {
+	case *ast.CallExpr:
+		collector.visitSupportedSlot(anyCategoryCallExprFun, owner, typed.Fun)
+		collector.inspectExprs(typed.Args, owner)
+	case *ast.TypeAssertExpr:
+		collector.inspectNode(typed.X, owner)
+		collector.visitSupportedSlot(anyCategoryTypeAssertType, owner, typed.Type)
+	case *ast.IndexExpr:
+		collector.inspectNode(typed.X, owner)
+		collector.visitSupportedSlot(anyCategoryIndexExprIndex, owner, typed.Index)
+	case *ast.IndexListExpr:
+		collector.inspectNode(typed.X, owner)
+		for _, index := range typed.Indices {
+			collector.visitSupportedSlot(anyCategoryIndexListIndex, owner, index)
+		}
+	case *ast.CompositeLit:
+		collector.inspectNode(typed.Type, owner)
+		collector.inspectExprs(typed.Elts, owner)
+	case *ast.KeyValueExpr:
+		collector.inspectNode(typed.Key, owner)
+		collector.inspectNode(typed.Value, owner)
+	case *ast.ParenExpr:
+		collector.inspectNode(typed.X, owner)
+	case *ast.SelectorExpr:
+		collector.inspectNode(typed.X, owner)
+	case *ast.SliceExpr:
+		collector.inspectNode(typed.X, owner)
+		collector.inspectNode(typed.Low, owner)
+		collector.inspectNode(typed.High, owner)
+		collector.inspectNode(typed.Max, owner)
+	case *ast.UnaryExpr:
+		collector.inspectNode(typed.X, owner)
+	case *ast.BinaryExpr:
+		collector.inspectNode(typed.X, owner)
+		collector.inspectNode(typed.Y, owner)
+	default:
+		return false
+	}
+	return true
+}
+
+func (collector *anyUsageCollector) inspectSimpleStmtNode(node ast.Node, owner string) bool {
+	switch typed := node.(type) {
+	case *ast.BlockStmt:
+		collector.inspectStmts(typed.List, owner)
+	case *ast.LabeledStmt:
+		collector.inspectNode(typed.Stmt, owner)
+	case *ast.DeclStmt:
+		collector.inspectLocalDecl(typed.Decl, owner)
+	case *ast.ExprStmt:
+		collector.inspectNode(typed.X, owner)
+	case *ast.SendStmt:
+		collector.inspectNode(typed.Chan, owner)
+		collector.inspectNode(typed.Value, owner)
+	case *ast.IncDecStmt:
+		collector.inspectNode(typed.X, owner)
+	case *ast.AssignStmt:
+		collector.inspectExprs(typed.Lhs, owner)
+		collector.inspectExprs(typed.Rhs, owner)
+	case *ast.GoStmt:
+		collector.inspectNode(typed.Call, owner)
+	case *ast.DeferStmt:
+		collector.inspectNode(typed.Call, owner)
+	case *ast.ReturnStmt:
+		collector.inspectExprs(typed.Results, owner)
+	default:
+		return false
+	}
+	return true
+}
+
+func (collector *anyUsageCollector) inspectControlStmtNode(node ast.Node, owner string) bool {
+	switch typed := node.(type) {
+	case *ast.IfStmt:
+		collector.inspectNode(typed.Init, owner)
+		collector.inspectNode(typed.Cond, owner)
+		collector.inspectNode(typed.Body, owner)
+		collector.inspectNode(typed.Else, owner)
+	case *ast.SwitchStmt:
+		collector.inspectNode(typed.Init, owner)
+		collector.inspectNode(typed.Tag, owner)
+		collector.inspectNode(typed.Body, owner)
+	case *ast.TypeSwitchStmt:
+		collector.inspectNode(typed.Init, owner)
+		collector.inspectNode(typed.Assign, owner)
+		collector.inspectTypeSwitchBody(typed.Body, owner)
+	case *ast.CaseClause:
+		collector.inspectExprs(typed.List, owner)
+		collector.inspectStmts(typed.Body, owner)
+	case *ast.CommClause:
+		collector.inspectNode(typed.Comm, owner)
+		collector.inspectStmts(typed.Body, owner)
+	case *ast.SelectStmt:
+		collector.inspectNode(typed.Body, owner)
+	case *ast.ForStmt:
+		collector.inspectNode(typed.Init, owner)
+		collector.inspectNode(typed.Cond, owner)
+		collector.inspectNode(typed.Post, owner)
+		collector.inspectNode(typed.Body, owner)
+	case *ast.RangeStmt:
+		collector.inspectNode(typed.Key, owner)
+		collector.inspectNode(typed.Value, owner)
+		collector.inspectNode(typed.X, owner)
+		collector.inspectNode(typed.Body, owner)
+	default:
+		return false
+	}
+	return true
+}
+
+func (collector *anyUsageCollector) inspectTypeSwitchBody(body *ast.BlockStmt, owner string) {
+	if body == nil {
+		return
+	}
+	for _, stmt := range body.List {
+		clause, ok := stmt.(*ast.CaseClause)
+		if !ok {
+			collector.inspectNode(stmt, owner)
+			continue
+		}
+		collector.inspectStmts(clause.Body, owner)
+	}
+}
+
+func valueSpecOwner(spec *ast.ValueSpec) string {
+	if spec == nil {
+		return ""
+	}
+	for _, name := range spec.Names {
+		if name != nil {
+			return name.Name
 		}
 	}
-	return ranges
+	return ""
+}
+
+func funcDeclOwner(decl *ast.FuncDecl) string {
+	if decl == nil || decl.Name == nil {
+		return ""
+	}
+	owner := decl.Name.Name
+	if decl.Recv != nil && len(decl.Recv.List) > 0 {
+		if recv := receiverTypeName(decl.Recv.List[0].Type); recv != "" {
+			owner = recv
+		}
+	}
+	return owner
 }
 
 func receiverTypeName(expr ast.Expr) string {
@@ -567,15 +770,6 @@ func receiverTypeName(expr ast.Expr) string {
 	default:
 		return ""
 	}
-}
-
-func symbolForPos(ranges []symbolRange, pos token.Pos) string {
-	for _, scope := range ranges {
-		if pos >= scope.start && pos <= scope.end {
-			return scope.name
-		}
-	}
-	return ""
 }
 
 func shouldExclude(relPath string, globs []string) bool {
