@@ -22,6 +22,9 @@ const (
 	testValidateUsageErrFmt    = "validate usage: %v"
 	testNoViolationsErrFmt     = "expected no violations, got %v"
 	testFooTestPath            = "pkg/api/foo_test.go"
+	testOwnerPayload           = "Payload"
+	testOwnerUse               = "Use"
+	testSamplePath             = "sample.go"
 	testPayloadSource          = "package api\ntype Payload map[string]any\n"
 	testExpectedNormalizeRoots = "."
 )
@@ -97,6 +100,9 @@ func TestValidateAnyUsageDetectsViolation(t *testing.T) {
 	}
 	if violations[0].Line != 2 {
 		t.Fatalf("unexpected line: %d", violations[0].Line)
+	}
+	if got, want := violations[0].Identity, newFindingIdentity(testPayloadPath, testOwnerPayload, anyCategoryMapTypeValue); got != want {
+		t.Fatalf("unexpected identity: got %#v want %#v", got, want)
 	}
 }
 
@@ -381,6 +387,72 @@ label:
 	}
 }
 
+func TestValidateAnyUsageCarriesCanonicalFindingIdentity(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, apiPath(base, testPayloadFile), "package api\ntype Payload map[string]any\nfunc Use(value any) {\n\ttype Hidden = any\n\tvar local map[string]any\n\t_ = any(value)\n}\n")
+
+	violations, err := ValidateAnyUsage(AnyAllowlist{Version: 1}, base, []string{testRootAPI})
+	if err != nil {
+		t.Fatalf(testValidateUsageErrFmt, err)
+	}
+
+	got := make([]violationSummary, 0, len(violations))
+	for _, violation := range violations {
+		got = append(got, violationSummary{
+			file:     violation.Identity.File,
+			owner:    violation.Identity.Owner,
+			category: violation.Identity.Category,
+			line:     violation.Line,
+		})
+	}
+	want := []violationSummary{
+		{file: testPayloadPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeValue), line: 2},
+		{file: testPayloadPath, owner: testOwnerUse, category: string(anyCategoryFieldType), line: 3},
+		{file: testPayloadPath, owner: testOwnerUse, category: string(anyCategoryTypeSpecType), line: 4},
+		{file: testPayloadPath, owner: testOwnerUse, category: string(anyCategoryMapTypeValue), line: 5},
+		{file: testPayloadPath, owner: testOwnerUse, category: string(anyCategoryCallExprFun), line: 6},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected violation identities:\ngot: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestAnyAllowlistIndexMatchesCanonicalFindingIdentity(t *testing.T) {
+	index := buildAllowlistIndex(AnyAllowlist{
+		Version: 1,
+		Entries: []AnyAllowlistEntry{
+			{
+				Path:        testPayloadPath,
+				Symbols:     []string{"Use"},
+				Description: "owner-wide allow",
+			},
+		},
+	})
+
+	if !index.isAllowed(newFindingIdentity(testPayloadPath, testOwnerUse, anyCategoryFieldType)) {
+		t.Fatalf("expected owner-wide allowlist match for field type")
+	}
+	if !index.isAllowed(newFindingIdentity(testPayloadPath, testOwnerUse, anyCategoryCallExprFun)) {
+		t.Fatalf("expected owner-wide allowlist match for call expression")
+	}
+	if index.isAllowed(newFindingIdentity(testPayloadPath, testOwnerPayload, anyCategoryMapTypeValue)) {
+		t.Fatalf("did not expect unrelated owner to match")
+	}
+
+	categoryScoped := anyAllowlistIndex{
+		allowAll: make(map[string]bool),
+		scoped: map[anyAllowlistSelector]struct{}{
+			{file: testPayloadPath, owner: testOwnerUse, category: string(anyCategoryCallExprFun)}: {},
+		},
+	}
+	if !categoryScoped.isAllowed(newFindingIdentity(testPayloadPath, testOwnerUse, anyCategoryCallExprFun)) {
+		t.Fatalf("expected category-scoped match")
+	}
+	if categoryScoped.isAllowed(newFindingIdentity(testPayloadPath, testOwnerUse, anyCategoryFieldType)) {
+		t.Fatalf("did not expect category-scoped selector to match a different category")
+	}
+}
+
 func TestValidateAnyUsageUsesEnclosingFunctionOwnerForLocalDeclarations(t *testing.T) {
 	base := t.TempDir()
 	writeFile(t, apiPath(base, testPayloadFile), "package api\nfunc Use() {\n\ttype Hidden = any\n\tvar local map[string]any\n\t_ = func(v any) {}\n}\n")
@@ -411,6 +483,13 @@ type usageSummary struct {
 	line     int
 }
 
+type violationSummary struct {
+	file     string
+	owner    string
+	category string
+	line     int
+}
+
 func collectUsageSummaries(t *testing.T, src string) []usageSummary {
 	t.Helper()
 
@@ -420,12 +499,12 @@ func collectUsageSummaries(t *testing.T, src string) []usageSummary {
 		t.Fatalf("parse file: %v", err)
 	}
 
-	usages := collectAnyUsages(file)
+	usages := collectAnyUsages(testSamplePath, file)
 	summaries := make([]usageSummary, 0, len(usages))
 	for _, usage := range usages {
 		summaries = append(summaries, usageSummary{
-			category: usage.category,
-			owner:    usage.owner,
+			category: anyUsageCategory(usage.identity.Category),
+			owner:    usage.identity.Owner,
 			line:     fset.Position(usage.pos).Line,
 		})
 	}

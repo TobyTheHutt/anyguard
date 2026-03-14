@@ -77,13 +77,14 @@ Finding identity:
 
 - File identity is the normalized repository-relative path used for allowlist matching and `Error.File`
 - Paths use slash separators and omit a leading `./`
-- Owner identity is the first enclosing top level declaration range that contains the finding
+- Owner identity is derived directly from the owning syntax node at collection time, not from positional or range overlap
 - `*ast.TypeSpec` uses the type name
-- `*ast.ValueSpec` uses declared names in source order
+- `*ast.ValueSpec` uses the first declared name in source order
 - `*ast.FuncDecl` uses the function name, or the receiver type name for methods
 - Local declarations inside a function or method inherit that enclosing function or receiver type owner
+- Category identity is the supported AST slot label captured at collection time, for example `*ast.MapType.Value`
 - File scoped allowlist entries match by path only
-- Symbol scoped allowlist entries match by `{path, owner}`
+- Symbol scoped allowlist entries match by the collected `{path, owner}` identity
 - If no owner resolves, symbol scoped matching fails closed and only a file scoped allowlist entry can suppress the finding
 
 Failure semantics:
