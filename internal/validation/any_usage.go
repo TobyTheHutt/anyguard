@@ -28,10 +28,18 @@ var nolintDirectiveRE = regexp.MustCompile(`(?i)\bnolint(?::([a-z0-9_,-]+))?`)
 
 // Error represents a single disallowed `any` usage.
 type Error struct {
-	File    string
-	Line    int
-	Message string
-	Code    string
+	File     string // File mirrors Identity.File for existing callers.
+	Line     int
+	Message  string
+	Code     string
+	Identity FindingIdentity
+}
+
+// FindingIdentity is the canonical identity for a collected any-usage finding.
+type FindingIdentity struct {
+	File     string
+	Owner    string
+	Category string
 }
 
 // AnyAllowlist captures approved any-usage locations for enforcement.
@@ -241,13 +249,21 @@ func normalizeSymbols(symbols []string) []string {
 
 type anyAllowlistIndex struct {
 	allowAll map[string]bool
-	symbols  map[string]map[string]struct{}
+	scoped   map[anyAllowlistSelector]struct{}
+}
+
+// anyAllowlistSelector leaves category unset for the current allowlist format,
+// but retains it so matching can support category-scoped selectors exactly.
+type anyAllowlistSelector struct {
+	file     string
+	owner    string
+	category string
 }
 
 func buildAllowlistIndex(allowlist AnyAllowlist) anyAllowlistIndex {
 	index := anyAllowlistIndex{
 		allowAll: make(map[string]bool),
-		symbols:  make(map[string]map[string]struct{}),
+		scoped:   make(map[anyAllowlistSelector]struct{}),
 	}
 
 	for _, entry := range allowlist.Entries {
@@ -256,29 +272,38 @@ func buildAllowlistIndex(allowlist AnyAllowlist) anyAllowlistIndex {
 			continue
 		}
 
-		if _, ok := index.symbols[entry.Path]; !ok {
-			index.symbols[entry.Path] = make(map[string]struct{})
-		}
 		for _, symbol := range entry.Symbols {
-			index.symbols[entry.Path][symbol] = struct{}{}
+			index.scoped[anyAllowlistSelector{
+				file:  entry.Path,
+				owner: symbol,
+			}] = struct{}{}
 		}
 	}
 
 	return index
 }
 
-func (index anyAllowlistIndex) isAllowed(relPath, symbol string) bool {
-	if index.allowAll[relPath] {
+func (index anyAllowlistIndex) isAllowed(identity FindingIdentity) bool {
+	if index.allowAll[identity.File] {
 		return true
 	}
-	if symbol == "" {
+	if identity.Owner == "" {
 		return false
 	}
-	allowedSymbols, ok := index.symbols[relPath]
-	if !ok {
-		return false
+
+	_, ok := index.scoped[anyAllowlistSelector{
+		file:     identity.File,
+		owner:    identity.Owner,
+		category: identity.Category,
+	}]
+	if ok {
+		return true
 	}
-	_, ok = allowedSymbols[symbol]
+
+	_, ok = index.scoped[anyAllowlistSelector{
+		file:  identity.File,
+		owner: identity.Owner,
+	}]
 	return ok
 }
 
@@ -296,7 +321,7 @@ func validateAnyFile(path, relPath string, index anyAllowlistIndex) ([]Error, er
 	}
 
 	nolintLines := collectNolintLines(file, fset)
-	uses := collectAnyUsages(file)
+	uses := collectAnyUsages(relPath, file)
 	if len(uses) == 0 {
 		return nil, nil
 	}
@@ -309,26 +334,27 @@ func validateAnyFile(path, relPath string, index anyAllowlistIndex) ([]Error, er
 			continue
 		}
 
-		if index.isAllowed(relPath, usage.owner) {
+		if index.isAllowed(usage.identity) {
 			continue
 		}
 
-		violations = append(violations, newViolation(relPath, pos.Line, lines))
+		violations = append(violations, newViolation(usage.identity, pos.Line, lines))
 	}
 
 	return violations, nil
 }
 
-func newViolation(relPath string, line int, lines []string) Error {
+func newViolation(identity FindingIdentity, line int, lines []string) Error {
 	code := ""
 	if line > 0 && line <= len(lines) {
 		code = strings.TrimSpace(lines[line-1])
 	}
 	return Error{
-		File:    relPath,
-		Line:    line,
-		Message: "disallowed any usage; add allowlist entry, use //nolint:anyguard, or replace with a concrete type",
-		Code:    code,
+		File:     identity.File,
+		Line:     line,
+		Message:  "disallowed any usage; add allowlist entry, use //nolint:anyguard, or replace with a concrete type",
+		Code:     code,
+		Identity: identity,
 	}
 }
 
@@ -395,18 +421,19 @@ const (
 )
 
 type anyUsage struct {
-	category anyUsageCategory
-	owner    string
+	identity FindingIdentity
 	pos      token.Pos
 }
 
 // anyUsageCollector records findings only from explicitly supported AST slots.
 type anyUsageCollector struct {
+	file   string
 	usages []anyUsage
 }
 
-func collectAnyUsages(file *ast.File) []anyUsage {
+func collectAnyUsages(relPath string, file *ast.File) []anyUsage {
 	collector := anyUsageCollector{
+		file:   normalizePath(relPath),
 		usages: make([]anyUsage, 0),
 	}
 	collector.inspectFile(file)
@@ -518,12 +545,19 @@ func (collector *anyUsageCollector) visitSupportedSlot(category anyUsageCategory
 	ident, ok := expr.(*ast.Ident)
 	if ok && ident.Name == "any" {
 		collector.usages = append(collector.usages, anyUsage{
-			category: category,
-			owner:    owner,
+			identity: newFindingIdentity(collector.file, owner, category),
 			pos:      ident.Pos(),
 		})
 	}
 	collector.inspectNode(expr, owner)
+}
+
+func newFindingIdentity(relPath, owner string, category anyUsageCategory) FindingIdentity {
+	return FindingIdentity{
+		File:     relPath,
+		Owner:    owner,
+		Category: string(category),
+	}
 }
 
 func (collector *anyUsageCollector) inspectNode(node ast.Node, owner string) {
