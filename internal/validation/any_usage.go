@@ -405,7 +405,7 @@ func newViolation(finding collectedFinding) Error {
 	return Error{
 		File:     finding.identity.File,
 		Line:     finding.line,
-		Message:  "disallowed any usage; add allowlist entry, use //nolint:anyguard, or replace with a concrete type",
+		Message:  "disallowed any usage. Add an allowlist entry, use //nolint:anyguard, or replace it with a concrete type",
 		Code:     finding.code,
 		Identity: finding.identity,
 	}

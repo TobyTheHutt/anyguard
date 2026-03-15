@@ -37,6 +37,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+export GOMODCACHE="${tmp_root}/gomodcache"
+export GOCACHE="${tmp_root}/gocache"
+
 worktree="${tmp_root}/golangci-lint-src"
 cp -R "${local_mod_dir}" "${worktree}"
 chmod -R u+w "${worktree}"
@@ -107,7 +110,7 @@ while :; do
 		exit 1
 	fi
 
-	echo "golangci-lint custom failed (attempt ${attempt}/${max_attempts}); retrying..." >&2
+	echo "golangci-lint custom failed on attempt ${attempt}/${max_attempts}. Retrying..." >&2
 	attempt=$((attempt + 1))
 	sleep 5
 done
