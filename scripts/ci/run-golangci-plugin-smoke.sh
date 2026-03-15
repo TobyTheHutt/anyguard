@@ -4,22 +4,25 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 smoke_dir="${repo_root}/testdata/golangci/smoke"
 custom_binary="${repo_root}/testdata/golangci/custom-gcl"
+custom_fingerprint_file="${custom_binary}.fingerprint"
 build_script="${repo_root}/scripts/ci/build-custom-gcl.sh"
+fingerprint_script="${repo_root}/scripts/ci/custom-gcl-fingerprint.sh"
 output_file="$(mktemp)"
+cache_dir="$(mktemp -d)"
 
-trap 'rm -f "${output_file}"' EXIT
+trap 'rm -f "${output_file}"; rm -rf "${cache_dir}"' EXIT
 
 custom_binary_is_stale() {
-	if [[ ! -x "${custom_binary}" ]]; then
+	local current_fingerprint
+	local recorded_fingerprint
+
+	if [[ ! -x "${custom_binary}" || ! -f "${custom_fingerprint_file}" ]]; then
 		return 0
 	fi
 
-	find "${repo_root}" \
-		\( -path "${repo_root}/.git" -o -path "${custom_binary}" -o -path "${repo_root}/testdata/golangci/custom-gcl.exe" \) -prune \
-		-o -type f \
-		\( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' -o -name '*.yml' -o -name '*.yaml' -o -name '*.sh' \) \
-		-newer "${custom_binary}" \
-		-print -quit | grep -q .
+	current_fingerprint="$(bash "${fingerprint_script}" "$(basename "${custom_binary}")")"
+	recorded_fingerprint="$(tr -d '[:space:]' < "${custom_fingerprint_file}")"
+	[[ -z "${recorded_fingerprint}" || "${current_fingerprint}" != "${recorded_fingerprint}" ]]
 }
 
 if custom_binary_is_stale; then
@@ -28,6 +31,7 @@ if custom_binary_is_stale; then
 fi
 
 cd "${smoke_dir}"
+export GOLANGCI_LINT_CACHE="${cache_dir}"
 
 set +e
 "${custom_binary}" run -c .golangci.yml ./... 2>&1 | tee "${output_file}"

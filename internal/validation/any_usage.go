@@ -79,13 +79,21 @@ func LoadAnyAllowlist(listPath string) (AnyAllowlist, error) {
 	decoder.KnownFields(true)
 	unmarshalErr := decoder.Decode(&allowlist)
 	if unmarshalErr != nil {
-		return AnyAllowlist{}, fmt.Errorf("parse any allowlist: %w", unmarshalErr)
+		return AnyAllowlist{}, wrapAllowlistParseError(unmarshalErr)
 	}
 	validateErr := validateAllowlist(&allowlist)
 	if validateErr != nil {
 		return AnyAllowlist{}, validateErr
 	}
 	return allowlist, nil
+}
+
+func wrapAllowlistParseError(err error) error {
+	message := err.Error()
+	if strings.Contains(message, "field path not found") || strings.Contains(message, "field symbols not found") {
+		return fmt.Errorf("parse any allowlist: legacy allowlist entry shape is unsupported: %w", err)
+	}
+	return fmt.Errorf("parse any allowlist: %w", err)
 }
 
 // ValidateAnyUsageFromFile loads an allowlist and validates any-usage across roots.
