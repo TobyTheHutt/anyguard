@@ -54,7 +54,7 @@ linters:
 
 ## Release and version pinning
 
-- Keep `plugins[].version` pinned to a released tag such as `v0.2.0`.
+- Keep `plugins[].version` pinned to a released tag such as `v1.0.0`.
 - Update the pinned version only after a corresponding module tag/release is published.
-- Module plugin support starts with `v0.2.0`. Do not pin below this version.
+- Module plugin support starts with `v1.0.0`. Do not pin below this version.
 - The plugin entrypoint import path `github.com/tobythehutt/anyguard/plugin` is stable and versioned with module tags.

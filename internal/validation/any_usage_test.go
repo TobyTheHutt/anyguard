@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -18,7 +19,9 @@ const (
 	testPayloadPath            = "pkg/api/payload.go"
 	testPayloadFile            = "payload.go"
 	testAllowlistFile          = "allowlist.yaml"
+	testPayloadBoundaryDesc    = "payload boundary"
 	testWriteAllowlistErrFmt   = "write allowlist: %v"
+	testUnexpectedErrFmt       = "unexpected error: %v"
 	testValidateUsageErrFmt    = "validate usage: %v"
 	testNoViolationsErrFmt     = "expected no violations, got %v"
 	testFooTestPath            = "pkg/api/foo_test.go"
@@ -47,7 +50,7 @@ func TestLoadAnyAllowlistErrors(t *testing.T) {
 func TestLoadAnyAllowlistRequiresDescription(t *testing.T) {
 	base := t.TempDir()
 	allowPath := filepath.Join(base, testAllowlistFile)
-	content := "version: 1\nentries:\n  - path: pkg/api/payload.go\n"
+	content := "version: 2\nentries:\n  - selector:\n      path: pkg/api/payload.go\n      owner: Payload\n      category: \"*ast.MapType.Value\"\n"
 	if err := os.WriteFile(allowPath, []byte(content), 0o600); err != nil {
 		t.Fatalf(testWriteAllowlistErrFmt, err)
 	}
@@ -57,19 +60,32 @@ func TestLoadAnyAllowlistRequiresDescription(t *testing.T) {
 	}
 }
 
+func TestLoadAnyAllowlistRejectsLegacyEntryShape(t *testing.T) {
+	base := t.TempDir()
+	allowPath := filepath.Join(base, testAllowlistFile)
+	content := "version: 2\nentries:\n  - path: pkg/api/payload.go\n    symbols:\n      - Payload\n    description: legacy owner-wide allow\n"
+	if err := os.WriteFile(allowPath, []byte(content), 0o600); err != nil {
+		t.Fatalf(testWriteAllowlistErrFmt, err)
+	}
+
+	_, err := LoadAnyAllowlist(allowPath)
+	if err == nil {
+		t.Fatalf("expected legacy entry shape error")
+	}
+	if !strings.Contains(err.Error(), "legacy allowlist entry shape is unsupported") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestValidateAnyUsageFromFile(t *testing.T) {
 	base := t.TempDir()
 	writeFile(t, apiPath(base, testPayloadFile), testPayloadSource)
 
 	allowlist := AnyAllowlist{
-		Version:      1,
+		Version:      anyAllowlistVersion,
 		ExcludeGlobs: []string{"**/*_test.go"},
 		Entries: []AnyAllowlistEntry{
-			{
-				Path:        testPayloadPath,
-				Symbols:     []string{"Payload"},
-				Description: "payload boundary",
-			},
+			allowlistEntry(testPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, testPayloadBoundaryDesc),
 		},
 	}
 	allowPath := filepath.Join(base, testAllowlistFile)
@@ -88,7 +104,7 @@ func TestValidateAnyUsageDetectsViolation(t *testing.T) {
 	base := t.TempDir()
 	writeFile(t, apiPath(base, testPayloadFile), testPayloadSource)
 
-	violations, err := ValidateAnyUsage(AnyAllowlist{Version: 1}, base, []string{testRootAPI})
+	violations, err := ValidateAnyUsage(AnyAllowlist{Version: anyAllowlistVersion}, base, []string{testRootAPI})
 	if err != nil {
 		t.Fatalf(testValidateUsageErrFmt, err)
 	}
@@ -129,7 +145,7 @@ func TestValidateAnyUsageSupportsNolint(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			base := t.TempDir()
 			writeFile(t, apiPath(base, testPayloadFile), testCase.src)
-			violations, err := ValidateAnyUsage(AnyAllowlist{Version: 1}, base, []string{testRootAPI})
+			violations, err := ValidateAnyUsage(AnyAllowlist{Version: anyAllowlistVersion}, base, []string{testRootAPI})
 			if err != nil {
 				t.Fatalf(testValidateUsageErrFmt, err)
 			}
@@ -146,7 +162,7 @@ func TestValidateAnyUsageHandlesExcludesAndRoots(t *testing.T) {
 	writeFile(t, apiPath(base, "payload_test.go"), "package api\ntype PayloadTest map[string]any\n")
 
 	allowlist := AnyAllowlist{
-		Version:      1,
+		Version:      anyAllowlistVersion,
 		ExcludeGlobs: []string{"**/*_test.go"},
 	}
 	violations, err := ValidateAnyUsage(allowlist, base, []string{DefaultRoots})
@@ -165,7 +181,7 @@ func TestValidateAnyUsageAllowsTypeParamConstraint(t *testing.T) {
 	base := t.TempDir()
 	writeFile(t, apiPath(base, "generic.go"), "package api\nfunc Use[T any](v T) {}\ntype Box[T []any] struct{}\n")
 
-	violations, err := ValidateAnyUsage(AnyAllowlist{Version: 1}, base, []string{testRootAPI})
+	violations, err := ValidateAnyUsage(AnyAllowlist{Version: anyAllowlistVersion}, base, []string{testRootAPI})
 	if err != nil {
 		t.Fatalf(testValidateUsageErrFmt, err)
 	}
@@ -196,11 +212,105 @@ func TestValidateAnyUsageErrorCases(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			_, err := ValidateAnyUsage(AnyAllowlist{Version: 1}, base, testCase.roots)
+			_, err := ValidateAnyUsage(AnyAllowlist{Version: anyAllowlistVersion}, base, testCase.roots)
 			if (err != nil) != testCase.wantError {
 				t.Fatalf("error mismatch: err=%v wantError=%v", err, testCase.wantError)
 			}
 		})
+	}
+}
+
+func TestValidateAnyUsageRejectsUnknownSelectorCategory(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, apiPath(base, testPayloadFile), testPayloadSource)
+
+	allowlist := AnyAllowlist{
+		Version: anyAllowlistVersion,
+		Entries: []AnyAllowlistEntry{
+			{
+				Selector: &AnyAllowlistSelector{
+					Path:     testPayloadPath,
+					Owner:    testOwnerPayload,
+					Category: "not-a-real-category",
+				},
+				Description: "invalid selector category",
+			},
+		},
+	}
+
+	_, err := ValidateAnyUsage(allowlist, base, []string{testRootAPI})
+	if err == nil {
+		t.Fatalf("expected unknown category error")
+	}
+	if !strings.Contains(err.Error(), "unknown category") {
+		t.Fatalf(testUnexpectedErrFmt, err)
+	}
+}
+
+func TestValidateAnyUsageRejectsDuplicateSelectors(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, apiPath(base, testPayloadFile), testPayloadSource)
+
+	selector := allowlistEntry(testPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, testPayloadBoundaryDesc)
+	allowlist := AnyAllowlist{
+		Version: anyAllowlistVersion,
+		Entries: []AnyAllowlistEntry{
+			selector,
+			selector,
+		},
+	}
+
+	_, err := ValidateAnyUsage(allowlist, base, []string{testRootAPI})
+	if err == nil {
+		t.Fatalf("expected duplicate selector error")
+	}
+	if !strings.Contains(err.Error(), "resolve to the same selector") {
+		t.Fatalf(testUnexpectedErrFmt, err)
+	}
+}
+
+func TestValidateAnyUsageRejectsUnresolvedSelector(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, apiPath(base, testPayloadFile), testPayloadSource)
+
+	allowlist := AnyAllowlist{
+		Version: anyAllowlistVersion,
+		Entries: []AnyAllowlistEntry{
+			allowlistEntry(testPayloadPath, "Paylod", anyCategoryMapTypeValue, "typoed owner"),
+		},
+	}
+
+	_, err := ValidateAnyUsage(allowlist, base, []string{testRootAPI})
+	if err == nil {
+		t.Fatalf("expected unresolved selector error")
+	}
+	if !strings.Contains(err.Error(), "does not match any finding") {
+		t.Fatalf(testUnexpectedErrFmt, err)
+	}
+}
+
+func TestValidateAnyUsageRejectsMalformedSelector(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, apiPath(base, testPayloadFile), testPayloadSource)
+
+	allowlist := AnyAllowlist{
+		Version: anyAllowlistVersion,
+		Entries: []AnyAllowlistEntry{
+			{
+				Selector: &AnyAllowlistSelector{
+					Path: testPayloadPath,
+				},
+				Description: "missing owner and category",
+			},
+		},
+	}
+
+	_, err := ValidateAnyUsage(allowlist, base, []string{testRootAPI})
+	if err == nil {
+		t.Fatalf("expected malformed selector error")
+	}
+	if !strings.Contains(err.Error(), "selector missing owner") {
+		t.Fatalf(testUnexpectedErrFmt, err)
 	}
 }
 
@@ -391,7 +501,7 @@ func TestValidateAnyUsageCarriesCanonicalFindingIdentity(t *testing.T) {
 	base := t.TempDir()
 	writeFile(t, apiPath(base, testPayloadFile), "package api\ntype Payload map[string]any\nfunc Use(value any) {\n\ttype Hidden = any\n\tvar local map[string]any\n\t_ = any(value)\n}\n")
 
-	violations, err := ValidateAnyUsage(AnyAllowlist{Version: 1}, base, []string{testRootAPI})
+	violations, err := ValidateAnyUsage(AnyAllowlist{Version: anyAllowlistVersion}, base, []string{testRootAPI})
 	if err != nil {
 		t.Fatalf(testValidateUsageErrFmt, err)
 	}
@@ -417,39 +527,22 @@ func TestValidateAnyUsageCarriesCanonicalFindingIdentity(t *testing.T) {
 	}
 }
 
-func TestAnyAllowlistIndexMatchesCanonicalFindingIdentity(t *testing.T) {
+func TestAnyAllowlistIndexMatchesStrictSelectorIdentity(t *testing.T) {
 	index := buildAllowlistIndex(AnyAllowlist{
-		Version: 1,
+		Version: anyAllowlistVersion,
 		Entries: []AnyAllowlistEntry{
-			{
-				Path:        testPayloadPath,
-				Symbols:     []string{"Use"},
-				Description: "owner-wide allow",
-			},
+			allowlistEntry(testPayloadPath, testOwnerUse, anyCategoryCallExprFun, "exact selector allow"),
 		},
 	})
 
-	if !index.isAllowed(newFindingIdentity(testPayloadPath, testOwnerUse, anyCategoryFieldType)) {
-		t.Fatalf("expected owner-wide allowlist match for field type")
-	}
 	if !index.isAllowed(newFindingIdentity(testPayloadPath, testOwnerUse, anyCategoryCallExprFun)) {
-		t.Fatalf("expected owner-wide allowlist match for call expression")
+		t.Fatalf("expected exact selector match")
 	}
-	if index.isAllowed(newFindingIdentity(testPayloadPath, testOwnerPayload, anyCategoryMapTypeValue)) {
-		t.Fatalf("did not expect unrelated owner to match")
+	if index.isAllowed(newFindingIdentity(testPayloadPath, testOwnerUse, anyCategoryFieldType)) {
+		t.Fatalf("did not expect selector to match a different category")
 	}
-
-	categoryScoped := anyAllowlistIndex{
-		allowAll: make(map[string]bool),
-		scoped: map[anyAllowlistSelector]struct{}{
-			{file: testPayloadPath, owner: testOwnerUse, category: string(anyCategoryCallExprFun)}: {},
-		},
-	}
-	if !categoryScoped.isAllowed(newFindingIdentity(testPayloadPath, testOwnerUse, anyCategoryCallExprFun)) {
-		t.Fatalf("expected category-scoped match")
-	}
-	if categoryScoped.isAllowed(newFindingIdentity(testPayloadPath, testOwnerUse, anyCategoryFieldType)) {
-		t.Fatalf("did not expect category-scoped selector to match a different category")
+	if index.isAllowed(newFindingIdentity(testPayloadPath, testOwnerPayload, anyCategoryCallExprFun)) {
+		t.Fatalf("did not expect selector to match a different owner")
 	}
 }
 
@@ -458,13 +551,11 @@ func TestValidateAnyUsageUsesEnclosingFunctionOwnerForLocalDeclarations(t *testi
 	writeFile(t, apiPath(base, testPayloadFile), "package api\nfunc Use() {\n\ttype Hidden = any\n\tvar local map[string]any\n\t_ = func(v any) {}\n}\n")
 
 	allowlist := AnyAllowlist{
-		Version: 1,
+		Version: anyAllowlistVersion,
 		Entries: []AnyAllowlistEntry{
-			{
-				Path:        testPayloadPath,
-				Symbols:     []string{"Use"},
-				Description: "allow local function-owned findings",
-			},
+			allowlistEntry(testPayloadPath, testOwnerUse, anyCategoryTypeSpecType, "allow local type alias"),
+			allowlistEntry(testPayloadPath, testOwnerUse, anyCategoryMapTypeValue, "allow local map usage"),
+			allowlistEntry(testPayloadPath, testOwnerUse, anyCategoryFieldType, "allow nested function parameter"),
 		},
 	}
 
@@ -520,6 +611,17 @@ func writeAllowlist(t *testing.T, path string, allowlist AnyAllowlist) {
 	writeErr := os.WriteFile(path, data, 0o600)
 	if writeErr != nil {
 		t.Fatalf(testWriteAllowlistErrFmt, writeErr)
+	}
+}
+
+func allowlistEntry(path, owner string, category anyUsageCategory, description string) AnyAllowlistEntry {
+	return AnyAllowlistEntry{
+		Selector: &AnyAllowlistSelector{
+			Path:     path,
+			Owner:    owner,
+			Category: string(category),
+		},
+		Description: description,
 	}
 }
 

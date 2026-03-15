@@ -79,14 +79,21 @@ func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	index := buildAllowlistIndex(allowlist)
+	findings, err := collectFindings(repoRoot, roots, allowlist.ExcludeGlobs)
+	if err != nil {
+		return nil, err
+	}
+	index, err := resolveAllowlistIndex(allowlist, findings)
+	if err != nil {
+		return nil, err
+	}
 
 	files, err := collectAnalyzerFiles(pass, repoRoot, roots)
 	if err != nil {
 		return nil, err
 	}
 	for _, file := range files {
-		if shouldExclude(file.relPath, allowlist.ExcludeGlobs) || index.allowAll[file.relPath] {
+		if shouldExclude(file.relPath, allowlist.ExcludeGlobs) {
 			continue
 		}
 

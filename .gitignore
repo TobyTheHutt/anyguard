@@ -34,3 +34,4 @@ go.work.sum
 # CI smoke-test generated binaries
 testdata/golangci/custom-gcl
 testdata/golangci/custom-gcl.exe
+testdata/golangci/custom-gcl.fingerprint

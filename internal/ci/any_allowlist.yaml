@@ -1,8 +1,9 @@
-version: 1
+version: 2
 exclude_globs:
   - "**/*_test.go"
 entries:
-  - path: internal/validation/analyzer.go
-    symbols:
-      - analyzerConfig
+  - selector:
+      path: internal/validation/analyzer.go
+      owner: analyzerConfig
+      category: "*ast.Field.Type"
     description: go/analysis Run API requires returning `any`
