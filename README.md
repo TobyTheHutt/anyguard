@@ -32,13 +32,38 @@ Packages:
 - Scans `.go` files under configured roots.
 - Parses AST and reports true type-position usage of `any`.
 - Compares findings against an allowlist.
-- Supports file-level and symbol-level exceptions, exclude globs, and specific `//nolint` instructions.
+- Supports strict selector-based exceptions, exclude globs, and specific `//nolint` instructions.
 - Exception metadata is minimal. `description` is required.
 - Exit `0`: no disallowed usage found.
 - Exit `3`: one or more disallowed usages were reported.
 - Exit `1`: analyzer/runtime/validation error.
 - Exit `2`: invalid CLI usage or flag parsing error.
 - On diagnostics, prints `file:line:column` and a reason.
+
+### Allowlist Schema
+
+The allowlist is strict configuration. The current schema version is `2`.
+
+```yaml
+version: 2
+exclude_globs:
+  - "**/*_test.go"
+entries:
+  - selector:
+      path: internal/validation/analyzer.go
+      owner: analyzerConfig
+      category: "*ast.Field.Type"
+    description: go/analysis Run API requires returning `any`
+```
+
+Each entry must provide an exact `selector` with the canonical `{path, owner, category}` finding identity.
+
+- Unknown fields are rejected during YAML decoding
+- Unknown categories are rejected during validation
+- Missing or malformed selector objects are rejected during validation
+- Duplicate selectors are rejected as ambiguous configuration
+- Selectors that do not resolve to any collected finding are rejected as stale or typoed configuration
+- Broad file-level or owner-only allowlist entries are not supported in version `2`
 
 ### Detection Contract
 
@@ -71,7 +96,7 @@ Unsupported and ambiguous cases:
 - Example false positive, a user function named `any` that is called as `any(1)` reports because the callee matches `*ast.CallExpr.Fun`
 - Example false positive, a value named `any` used in `values[any]` reports because the index matches `*ast.IndexExpr.Index`
 - Example false positive, `Box[int, any]` style syntax reports because the second slot matches `*ast.IndexListExpr.Indices[i]`
-- These syntax-only matches can be suppressed with a file scoped or symbol scoped allowlist entry, or with `//nolint:anyguard` on the same line or the previous line
+- These syntax-only matches can be suppressed with an exact allowlist selector or with `//nolint:anyguard` on the same line or the previous line
 
 Finding identity:
 
@@ -83,13 +108,14 @@ Finding identity:
 - `*ast.FuncDecl` uses the function name, or the receiver type name for methods
 - Local declarations inside a function or method inherit that enclosing function or receiver type owner
 - Category identity is the supported AST slot label captured at collection time, for example `*ast.MapType.Value`
-- File scoped allowlist entries match by path only
-- Symbol scoped allowlist entries match by the collected `{path, owner}` identity
-- If no owner resolves, symbol scoped matching fails closed and only a file scoped allowlist entry can suppress the finding
+- Allowlist selectors match only by the exact collected `{path, owner, category}` identity
+- Owner or category are never inferred during allowlist matching
+- A selector that does not resolve to a current finding is treated as a configuration error
 
 Failure semantics:
 
 - Allowlist read, parse, and validation errors halt analysis with an error
+- Stale, unresolved, malformed, or ambiguous allowlist selectors halt analysis with an error
 - Root resolution, filesystem traversal, and Go parse errors halt CLI validation with an error
 - Analyzer path resolution fails only after repository root, GOPATH, and package path derivation have all failed
 - Analyzer files with no filename or no token file are skipped

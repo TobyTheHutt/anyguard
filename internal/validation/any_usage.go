@@ -2,6 +2,7 @@
 package validation
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -19,9 +20,10 @@ import (
 const anyguardLinter = "anyguard"
 
 const (
-	rootWildcardSuffix = "/..."
-	rootAllPattern     = "..."
-	anyTokenMarker     = "<<ANY>>"
+	anyAllowlistVersion = 2
+	rootWildcardSuffix  = "/..."
+	rootAllPattern      = "..."
+	anyTokenMarker      = "<<ANY>>"
 )
 
 var nolintDirectiveRE = regexp.MustCompile(`(?i)\bnolint(?::([a-z0-9_,-]+))?`)
@@ -49,12 +51,19 @@ type AnyAllowlist struct {
 	Entries      []AnyAllowlistEntry `yaml:"entries"`
 }
 
+// AnyAllowlistSelector describes the canonical finding identity a strict allowlist
+// entry must resolve to.
+type AnyAllowlistSelector struct {
+	Path     string `yaml:"path"`
+	Owner    string `yaml:"owner"`
+	Category string `yaml:"category"`
+}
+
 // AnyAllowlistEntry describes a scoped any-usage exception.
 type AnyAllowlistEntry struct {
-	Path        string   `yaml:"path"`
-	Symbols     []string `yaml:"symbols,omitempty"`
-	Description string   `yaml:"description"`
-	Refs        []string `yaml:"refs,omitempty"`
+	Selector    *AnyAllowlistSelector `yaml:"selector"`
+	Description string                `yaml:"description"`
+	Refs        []string              `yaml:"refs,omitempty"`
 }
 
 // LoadAnyAllowlist reads and validates a YAML any-usage allowlist file.
@@ -66,7 +75,9 @@ func LoadAnyAllowlist(listPath string) (AnyAllowlist, error) {
 	}
 
 	var allowlist AnyAllowlist
-	unmarshalErr := yaml.Unmarshal(data, &allowlist)
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	unmarshalErr := decoder.Decode(&allowlist)
 	if unmarshalErr != nil {
 		return AnyAllowlist{}, fmt.Errorf("parse any allowlist: %w", unmarshalErr)
 	}
@@ -100,8 +111,28 @@ func ValidateAnyUsage(allowlist AnyAllowlist, baseDir string, roots []string) ([
 		return nil, fmt.Errorf("resolve base dir: %w", err)
 	}
 
-	index := buildAllowlistIndex(allowlist)
-	violations := make([]Error, 0)
+	findings, err := collectFindings(baseAbs, roots, allowlist.ExcludeGlobs)
+	if err != nil {
+		return nil, err
+	}
+
+	index, err := resolveAllowlistIndex(allowlist, findings)
+	if err != nil {
+		return nil, err
+	}
+
+	violations := make([]Error, 0, len(findings))
+	for _, finding := range findings {
+		if finding.suppressedByNolint || index.isAllowed(finding.identity) {
+			continue
+		}
+		violations = append(violations, newViolation(finding))
+	}
+	return violations, nil
+}
+
+func collectFindings(baseAbs string, roots, globs []string) ([]collectedFinding, error) {
+	findings := make([]collectedFinding, 0)
 	for _, root := range roots {
 		rootPath, skipRoot, rootErr := resolveRootPath(baseAbs, root)
 		if rootErr != nil {
@@ -111,33 +142,32 @@ func ValidateAnyUsage(allowlist AnyAllowlist, baseDir string, roots []string) ([
 			continue
 		}
 
-		rootViolations, validateErr := validateRoot(rootPath, baseAbs, allowlist.ExcludeGlobs, index)
-		if validateErr != nil {
-			return nil, validateErr
+		rootFindings, err := collectRootFindings(rootPath, baseAbs, globs)
+		if err != nil {
+			return nil, err
 		}
-		violations = append(violations, rootViolations...)
+		findings = append(findings, rootFindings...)
 	}
-
-	return violations, nil
+	return findings, nil
 }
 
-func validateRoot(rootPath, baseAbs string, globs []string, index anyAllowlistIndex) ([]Error, error) {
-	violations := make([]Error, 0)
+func collectRootFindings(rootPath, baseAbs string, globs []string) ([]collectedFinding, error) {
+	findings := make([]collectedFinding, 0)
 	walkErr := filepath.WalkDir(rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
-		fileViolations, processErr := processRootFile(path, entry, walkErr, baseAbs, globs, index)
+		fileFindings, processErr := processRootFile(path, entry, walkErr, baseAbs, globs)
 		if processErr != nil {
 			return processErr
 		}
-		violations = append(violations, fileViolations...)
+		findings = append(findings, fileFindings...)
 		return nil
 	})
 	if walkErr != nil {
 		return nil, walkErr
 	}
-	return violations, nil
+	return findings, nil
 }
 
-func processRootFile(path string, entry fs.DirEntry, walkErr error, baseAbs string, globs []string, index anyAllowlistIndex) ([]Error, error) {
+func processRootFile(path string, entry fs.DirEntry, walkErr error, baseAbs string, globs []string) ([]collectedFinding, error) {
 	if walkErr != nil {
 		return nil, walkErr
 	}
@@ -150,10 +180,10 @@ func processRootFile(path string, entry fs.DirEntry, walkErr error, baseAbs stri
 		return nil, relErr
 	}
 	relPath = normalizePath(relPath)
-	if shouldExclude(relPath, globs) || index.allowAll[relPath] {
+	if shouldExclude(relPath, globs) {
 		return nil, nil
 	}
-	return validateAnyFile(path, relPath, index)
+	return collectFileFindings(path, relPath)
 }
 
 func resolveRootPath(baseAbs, root string) (string, bool, error) {
@@ -199,23 +229,17 @@ func normalizeRootValue(root string) string {
 }
 
 func validateAllowlist(allowlist *AnyAllowlist) error {
-	if allowlist.Version <= 0 {
-		return errors.New("any allowlist version must be >= 1")
+	if allowlist.Version != anyAllowlistVersion {
+		return fmt.Errorf("unsupported any allowlist version %d: expected %d", allowlist.Version, anyAllowlistVersion)
 	}
 
+	seenSelectors := make(map[FindingIdentity]int, len(allowlist.Entries))
 	for i, entry := range allowlist.Entries {
-		entry.Path = normalizePath(entry.Path)
-		if entry.Path == "" {
-			return fmt.Errorf("any allowlist entry %d missing path", i)
+		normalizedEntry, err := validateAllowlistEntry(entry, i, seenSelectors)
+		if err != nil {
+			return err
 		}
-
-		entry.Description = strings.TrimSpace(entry.Description)
-		if entry.Description == "" {
-			return fmt.Errorf("any allowlist entry %d missing description", i)
-		}
-
-		entry.Symbols = normalizeSymbols(entry.Symbols)
-		allowlist.Entries[i] = entry
+		allowlist.Entries[i] = normalizedEntry
 	}
 
 	for i, glob := range allowlist.ExcludeGlobs {
@@ -224,90 +248,119 @@ func validateAllowlist(allowlist *AnyAllowlist) error {
 	return nil
 }
 
+func validateAllowlistEntry(entry AnyAllowlistEntry, index int, seenSelectors map[FindingIdentity]int) (AnyAllowlistEntry, error) {
+	selector, err := normalizeValidatedSelector(entry.Selector, index)
+	if err != nil {
+		return AnyAllowlistEntry{}, err
+	}
+
+	entry.Description = strings.TrimSpace(entry.Description)
+	if entry.Description == "" {
+		return AnyAllowlistEntry{}, fmt.Errorf("any allowlist entry %d missing description", index)
+	}
+
+	identity := selector.identity()
+	if prev, exists := seenSelectors[identity]; exists {
+		return AnyAllowlistEntry{}, fmt.Errorf(
+			"any allowlist entries %d and %d resolve to the same selector %s",
+			prev,
+			index,
+			formatFindingIdentity(identity),
+		)
+	}
+
+	seenSelectors[identity] = index
+	entry.Selector = &selector
+	return entry, nil
+}
+
+func normalizeValidatedSelector(selector *AnyAllowlistSelector, index int) (AnyAllowlistSelector, error) {
+	if selector == nil {
+		return AnyAllowlistSelector{}, fmt.Errorf("any allowlist entry %d missing selector", index)
+	}
+
+	normalized := normalizeAllowlistSelector(*selector)
+	if normalized.Path == "" {
+		return AnyAllowlistSelector{}, fmt.Errorf("any allowlist entry %d selector missing path", index)
+	}
+	if normalized.Owner == "" {
+		return AnyAllowlistSelector{}, fmt.Errorf("any allowlist entry %d selector missing owner", index)
+	}
+	if normalized.Category == "" {
+		return AnyAllowlistSelector{}, fmt.Errorf("any allowlist entry %d selector missing category", index)
+	}
+	if !isSupportedAnyUsageCategory(normalized.Category) {
+		return AnyAllowlistSelector{}, fmt.Errorf(
+			"any allowlist entry %d selector has unknown category %q",
+			index,
+			normalized.Category,
+		)
+	}
+	return normalized, nil
+}
+
 func normalizePath(path string) string {
-	cleaned := filepath.Clean(strings.TrimSpace(path))
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	cleaned := filepath.Clean(path)
 	cleaned = filepath.ToSlash(cleaned)
 	return strings.TrimPrefix(cleaned, "./")
 }
 
-func normalizeSymbols(symbols []string) []string {
-	if len(symbols) == 0 {
-		return nil
-	}
-	normalized := make([]string, 0, len(symbols))
-	for _, symbol := range symbols {
-		symbol = strings.TrimSpace(symbol)
-		if symbol != "" {
-			normalized = append(normalized, symbol)
-		}
-	}
-	if len(normalized) == 0 {
-		return nil
-	}
-	return normalized
+func normalizeAllowlistSelector(selector AnyAllowlistSelector) AnyAllowlistSelector {
+	selector.Path = normalizePath(selector.Path)
+	selector.Owner = strings.TrimSpace(selector.Owner)
+	selector.Category = strings.TrimSpace(selector.Category)
+	return selector
 }
 
 type anyAllowlistIndex struct {
-	allowAll map[string]bool
-	scoped   map[anyAllowlistSelector]struct{}
-}
-
-// anyAllowlistSelector leaves category unset for the current allowlist format,
-// but retains it so matching can support category-scoped selectors exactly.
-type anyAllowlistSelector struct {
-	file     string
-	owner    string
-	category string
+	allowed map[FindingIdentity]struct{}
 }
 
 func buildAllowlistIndex(allowlist AnyAllowlist) anyAllowlistIndex {
 	index := anyAllowlistIndex{
-		allowAll: make(map[string]bool),
-		scoped:   make(map[anyAllowlistSelector]struct{}),
+		allowed: make(map[FindingIdentity]struct{}, len(allowlist.Entries)),
 	}
 
 	for _, entry := range allowlist.Entries {
-		if len(entry.Symbols) == 0 {
-			index.allowAll[entry.Path] = true
-			continue
-		}
-
-		for _, symbol := range entry.Symbols {
-			index.scoped[anyAllowlistSelector{
-				file:  entry.Path,
-				owner: symbol,
-			}] = struct{}{}
-		}
+		index.allowed[entry.Selector.identity()] = struct{}{}
 	}
 
 	return index
 }
 
 func (index anyAllowlistIndex) isAllowed(identity FindingIdentity) bool {
-	if index.allowAll[identity.File] {
-		return true
-	}
-	if identity.Owner == "" {
-		return false
-	}
-
-	_, ok := index.scoped[anyAllowlistSelector{
-		file:     identity.File,
-		owner:    identity.Owner,
-		category: identity.Category,
-	}]
-	if ok {
-		return true
-	}
-
-	_, ok = index.scoped[anyAllowlistSelector{
-		file:  identity.File,
-		owner: identity.Owner,
-	}]
+	_, ok := index.allowed[identity]
 	return ok
 }
 
 func validateAnyFile(path, relPath string, index anyAllowlistIndex) ([]Error, error) {
+	findings, err := collectFileFindings(path, relPath)
+	if err != nil {
+		return nil, err
+	}
+
+	violations := make([]Error, 0, len(findings))
+	for _, finding := range findings {
+		if finding.suppressedByNolint || index.isAllowed(finding.identity) {
+			continue
+		}
+		violations = append(violations, newViolation(finding))
+	}
+	return violations, nil
+}
+
+type collectedFinding struct {
+	identity           FindingIdentity
+	line               int
+	code               string
+	suppressedByNolint bool
+}
+
+func collectFileFindings(path, relPath string) ([]collectedFinding, error) {
 	// #nosec G304 -- path is discovered from validated roots.
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -327,35 +380,68 @@ func validateAnyFile(path, relPath string, index anyAllowlistIndex) ([]Error, er
 	}
 
 	lines := strings.Split(string(content), "\n")
-	violations := make([]Error, 0, len(uses))
+	findings := make([]collectedFinding, 0, len(uses))
 	for _, usage := range uses {
 		pos := fset.Position(usage.pos)
-		if isSuppressedByNolint(pos.Line, nolintLines) {
-			continue
-		}
-
-		if index.isAllowed(usage.identity) {
-			continue
-		}
-
-		violations = append(violations, newViolation(usage.identity, pos.Line, lines))
+		findings = append(findings, collectedFinding{
+			identity:           usage.identity,
+			line:               pos.Line,
+			code:               lineCode(pos.Line, lines),
+			suppressedByNolint: isSuppressedByNolint(pos.Line, nolintLines),
+		})
 	}
 
-	return violations, nil
+	return findings, nil
 }
 
-func newViolation(identity FindingIdentity, line int, lines []string) Error {
-	code := ""
-	if line > 0 && line <= len(lines) {
-		code = strings.TrimSpace(lines[line-1])
+func lineCode(line int, lines []string) string {
+	if line <= 0 || line > len(lines) {
+		return ""
 	}
+	return strings.TrimSpace(lines[line-1])
+}
+
+func newViolation(finding collectedFinding) Error {
 	return Error{
-		File:     identity.File,
-		Line:     line,
+		File:     finding.identity.File,
+		Line:     finding.line,
 		Message:  "disallowed any usage; add allowlist entry, use //nolint:anyguard, or replace with a concrete type",
-		Code:     code,
-		Identity: identity,
+		Code:     finding.code,
+		Identity: finding.identity,
 	}
+}
+
+func resolveAllowlistIndex(allowlist AnyAllowlist, findings []collectedFinding) (anyAllowlistIndex, error) {
+	available := make(map[FindingIdentity]struct{}, len(findings))
+	for _, finding := range findings {
+		available[finding.identity] = struct{}{}
+	}
+
+	for i, entry := range allowlist.Entries {
+		identity := entry.Selector.identity()
+		if _, ok := available[identity]; ok {
+			continue
+		}
+		return anyAllowlistIndex{}, fmt.Errorf(
+			"any allowlist entry %d selector %s does not match any finding",
+			i,
+			formatFindingIdentity(identity),
+		)
+	}
+
+	return buildAllowlistIndex(allowlist), nil
+}
+
+func (selector AnyAllowlistSelector) identity() FindingIdentity {
+	return FindingIdentity{
+		File:     selector.Path,
+		Owner:    selector.Owner,
+		Category: selector.Category,
+	}
+}
+
+func formatFindingIdentity(identity FindingIdentity) string {
+	return fmt.Sprintf("{path=%q owner=%q category=%q}", identity.File, identity.Owner, identity.Category)
 }
 
 func collectNolintLines(file *ast.File, fset *token.FileSet) map[int]struct{} {
@@ -419,6 +505,27 @@ const (
 	anyCategoryIndexExprIndex anyUsageCategory = "*ast.IndexExpr.Index"
 	anyCategoryIndexListIndex anyUsageCategory = "*ast.IndexListExpr.Indices"
 )
+
+func isSupportedAnyUsageCategory(category string) bool {
+	switch anyUsageCategory(category) {
+	case anyCategoryFieldType,
+		anyCategoryValueSpecType,
+		anyCategoryTypeSpecType,
+		anyCategoryTypeAssertType,
+		anyCategoryArrayTypeElt,
+		anyCategoryMapTypeKey,
+		anyCategoryMapTypeValue,
+		anyCategoryChanTypeValue,
+		anyCategoryStarExprX,
+		anyCategoryEllipsisElt,
+		anyCategoryCallExprFun,
+		anyCategoryIndexExprIndex,
+		anyCategoryIndexListIndex:
+		return true
+	default:
+		return false
+	}
+}
 
 type anyUsage struct {
 	identity FindingIdentity

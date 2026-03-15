@@ -1,6 +1,7 @@
-version: 1
+version: 2
 entries:
-  - path: pkg/ok/ok.go
-    symbols:
-      - Payload
+  - selector:
+      path: pkg/ok/ok.go
+      owner: Payload
+      category: "*ast.MapType.Value"
     description: allowed boundary type for smoke tests
