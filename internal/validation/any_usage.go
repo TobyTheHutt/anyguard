@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -32,6 +33,7 @@ var nolintDirectiveRE = regexp.MustCompile(`(?i)\bnolint(?::([a-z0-9_,-]+))?`)
 type Error struct {
 	File     string // File mirrors Identity.File for existing callers.
 	Line     int
+	Column   int
 	Message  string
 	Code     string
 	Identity FindingIdentity
@@ -129,14 +131,7 @@ func ValidateAnyUsage(allowlist AnyAllowlist, baseDir string, roots []string) ([
 		return nil, err
 	}
 
-	violations := make([]Error, 0, len(findings))
-	for _, finding := range findings {
-		if finding.suppressedByNolint || index.isAllowed(finding.identity) {
-			continue
-		}
-		violations = append(violations, newViolation(finding))
-	}
-	return violations, nil
+	return violationsFromFindings(findings, index), nil
 }
 
 func collectFindings(baseAbs string, roots, globs []string) ([]collectedFinding, error) {
@@ -345,25 +340,10 @@ func (index anyAllowlistIndex) isAllowed(identity FindingIdentity) bool {
 	return ok
 }
 
-func validateAnyFile(path, relPath string, index anyAllowlistIndex) ([]Error, error) {
-	findings, err := collectFileFindings(path, relPath)
-	if err != nil {
-		return nil, err
-	}
-
-	violations := make([]Error, 0, len(findings))
-	for _, finding := range findings {
-		if finding.suppressedByNolint || index.isAllowed(finding.identity) {
-			continue
-		}
-		violations = append(violations, newViolation(finding))
-	}
-	return violations, nil
-}
-
 type collectedFinding struct {
 	identity           FindingIdentity
 	line               int
+	column             int
 	code               string
 	suppressedByNolint bool
 }
@@ -394,6 +374,7 @@ func collectFileFindings(path, relPath string) ([]collectedFinding, error) {
 		findings = append(findings, collectedFinding{
 			identity:           usage.identity,
 			line:               pos.Line,
+			column:             pos.Column,
 			code:               lineCode(pos.Line, lines),
 			suppressedByNolint: isSuppressedByNolint(pos.Line, nolintLines),
 		})
@@ -413,10 +394,43 @@ func newViolation(finding collectedFinding) Error {
 	return Error{
 		File:     finding.identity.File,
 		Line:     finding.line,
+		Column:   finding.column,
 		Message:  "disallowed any usage. Add an allowlist entry, use //nolint:anyguard, or replace it with a concrete type",
 		Code:     finding.code,
 		Identity: finding.identity,
 	}
+}
+
+func violationsFromFindings(findings []collectedFinding, index anyAllowlistIndex) []Error {
+	violations := make([]Error, 0, len(findings))
+	for _, finding := range findings {
+		if finding.suppressedByNolint || index.isAllowed(finding.identity) {
+			continue
+		}
+		violations = append(violations, newViolation(finding))
+	}
+	sortViolations(violations)
+	return violations
+}
+
+func sortViolations(violations []Error) {
+	sort.Slice(violations, func(i, j int) bool {
+		left := violations[i]
+		right := violations[j]
+
+		switch {
+		case left.File != right.File:
+			return left.File < right.File
+		case left.Line != right.Line:
+			return left.Line < right.Line
+		case left.Column != right.Column:
+			return left.Column < right.Column
+		case left.Identity.Category != right.Identity.Category:
+			return left.Identity.Category < right.Identity.Category
+		default:
+			return left.Identity.Owner < right.Identity.Owner
+		}
+	})
 }
 
 func resolveAllowlistIndex(allowlist AnyAllowlist, findings []collectedFinding) (anyAllowlistIndex, error) {
