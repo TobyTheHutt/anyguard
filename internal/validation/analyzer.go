@@ -52,9 +52,13 @@ type analyzerConfig struct {
 }
 
 type analyzerFile struct {
-	absPath   string
 	relPath   string
 	tokenFile *token.File
+}
+
+type analyzerViolation struct {
+	tokenFile *token.File
+	violation Error
 }
 
 type analysisResult struct{}
@@ -91,17 +95,7 @@ func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, file := range files {
-		if shouldExclude(file.relPath, allowlist.ExcludeGlobs) {
-			continue
-		}
-
-		violations, validateErr := validateAnyFile(file.absPath, file.relPath, index)
-		if validateErr != nil {
-			return nil, fmt.Errorf("validate %s: %w", file.relPath, validateErr)
-		}
-		reportViolations(pass, file.tokenFile, violations)
-	}
+	reportViolations(pass, collectAnalyzerViolations(files, findings, index))
 	return analysisResult{}, nil
 }
 
@@ -195,7 +189,6 @@ func collectAnalyzerFiles(pass *analysis.Pass, repoRoot string, roots []string) 
 			continue
 		}
 		files = append(files, analyzerFile{
-			absPath:   filepath.Clean(pos.Filename),
 			relPath:   relPath,
 			tokenFile: tokenFile,
 		})
@@ -278,25 +271,79 @@ func splitRoots(value string) []string {
 	return roots
 }
 
-func reportViolations(pass *analysis.Pass, file *token.File, violations []Error) {
+func collectAnalyzerViolations(files []analyzerFile, findings []collectedFinding, index anyAllowlistIndex) []analyzerViolation {
+	if len(files) == 0 || len(findings) == 0 {
+		return nil
+	}
+
+	tokenFilesByPath := make(map[string]*token.File, len(files))
+	filteredFindings := make([]collectedFinding, 0, len(findings))
+	for _, file := range files {
+		tokenFilesByPath[file.relPath] = file.tokenFile
+	}
+
+	for _, finding := range findings {
+		if _, ok := tokenFilesByPath[finding.identity.File]; !ok {
+			continue
+		}
+		filteredFindings = append(filteredFindings, finding)
+	}
+
+	violations := violationsFromFindings(filteredFindings, index)
+	reportable := make([]analyzerViolation, 0, len(violations))
+	for _, violation := range violations {
+		reportable = append(reportable, analyzerViolation{
+			tokenFile: tokenFilesByPath[violation.File],
+			violation: violation,
+		})
+	}
+	return reportable
+}
+
+func reportViolations(pass *analysis.Pass, violations []analyzerViolation) {
+	for _, reportable := range violations {
+		reportViolation(pass, reportable.tokenFile, reportable.violation)
+	}
+}
+
+func reportViolation(pass *analysis.Pass, file *token.File, violation Error) {
 	if file == nil {
 		return
 	}
-	for _, violation := range violations {
-		if violation.Line <= 0 || violation.Line > file.LineCount() {
-			continue
-		}
-		message := violation.Message
-		if violation.Code != "" {
-			message = message + " (code: " + violation.Code + ")"
-		}
-		pos := file.LineStart(violation.Line)
-		pass.Report(analysis.Diagnostic{
-			Pos:     pos,
-			End:     lineEnd(file, violation.Line, pos),
-			Message: message,
-		})
+
+	pos, ok := violationPos(file, violation.Line, violation.Column)
+	if !ok {
+		return
 	}
+
+	message := violation.Message
+	if violation.Code != "" {
+		message = message + " (code: " + violation.Code + ")"
+	}
+
+	pass.Report(analysis.Diagnostic{
+		Pos:     pos,
+		End:     lineEnd(file, violation.Line, pos),
+		Message: message,
+	})
+}
+
+func violationPos(file *token.File, line, column int) (token.Pos, bool) {
+	if line <= 0 || line > file.LineCount() {
+		return token.NoPos, false
+	}
+
+	start := file.LineStart(line)
+	if column <= 1 {
+		return start, true
+	}
+
+	pos := start + token.Pos(column-1)
+	end := lineEnd(file, line, start)
+	if pos > end {
+		return end, true
+	}
+	return pos, true
 }
 
 func lineEnd(file *token.File, line int, pos token.Pos) token.Pos {

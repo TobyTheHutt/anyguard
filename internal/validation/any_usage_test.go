@@ -27,8 +27,13 @@ const (
 	testFooTestPath            = "pkg/api/foo_test.go"
 	testOwnerPayload           = "Payload"
 	testOwnerUse               = "Use"
+	testOwnerLater             = "Later"
 	testSamplePath             = "sample.go"
 	testPayloadSource          = "package api\ntype Payload map[string]any\n"
+	testAlphaPayloadPath       = "pkg/alpha/payload.go"
+	testAlphaPayloadSource     = "package alpha\ntype Payload map[any]any\n"
+	testZetaLaterPath          = "pkg/zeta/later.go"
+	testZetaLaterSource        = "package zeta\nfunc Later() { _, _ = any(1), any(2) }\n"
 	testExpectedNormalizeRoots = "."
 )
 
@@ -116,6 +121,9 @@ func TestValidateAnyUsageDetectsViolation(t *testing.T) {
 	}
 	if violations[0].Line != 2 {
 		t.Fatalf("unexpected line: %d", violations[0].Line)
+	}
+	if violations[0].Column != 25 {
+		t.Fatalf("unexpected column: %d", violations[0].Column)
 	}
 	if got, want := violations[0].Identity, newFindingIdentity(testPayloadPath, testOwnerPayload, anyCategoryMapTypeValue); got != want {
 		t.Fatalf("unexpected identity: got %#v want %#v", got, want)
@@ -513,17 +521,131 @@ func TestValidateAnyUsageCarriesCanonicalFindingIdentity(t *testing.T) {
 			owner:    violation.Identity.Owner,
 			category: violation.Identity.Category,
 			line:     violation.Line,
+			column:   violation.Column,
 		})
 	}
 	want := []violationSummary{
-		{file: testPayloadPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeValue), line: 2},
-		{file: testPayloadPath, owner: testOwnerUse, category: string(anyCategoryFieldType), line: 3},
-		{file: testPayloadPath, owner: testOwnerUse, category: string(anyCategoryTypeSpecType), line: 4},
-		{file: testPayloadPath, owner: testOwnerUse, category: string(anyCategoryMapTypeValue), line: 5},
-		{file: testPayloadPath, owner: testOwnerUse, category: string(anyCategoryCallExprFun), line: 6},
+		{file: testPayloadPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeValue), line: 2, column: 25},
+		{file: testPayloadPath, owner: testOwnerUse, category: string(anyCategoryFieldType), line: 3, column: 16},
+		{file: testPayloadPath, owner: testOwnerUse, category: string(anyCategoryTypeSpecType), line: 4, column: 16},
+		{file: testPayloadPath, owner: testOwnerUse, category: string(anyCategoryMapTypeValue), line: 5, column: 23},
+		{file: testPayloadPath, owner: testOwnerUse, category: string(anyCategoryCallExprFun), line: 6, column: 6},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected violation identities:\ngot: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestValidateAnyUsageSortsViolationsDeterministicallyAcrossRoots(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, filepath.Join(base, testZetaLaterPath), testZetaLaterSource)
+	writeFile(t, filepath.Join(base, testAlphaPayloadPath), testAlphaPayloadSource)
+
+	allowlist := AnyAllowlist{Version: anyAllowlistVersion}
+
+	gotReversed, err := ValidateAnyUsage(allowlist, base, []string{"pkg/zeta", "pkg/alpha"})
+	if err != nil {
+		t.Fatalf(testValidateUsageErrFmt, err)
+	}
+
+	gotCanonical, err := ValidateAnyUsage(allowlist, base, []string{"pkg/alpha", "pkg/zeta"})
+	if err != nil {
+		t.Fatalf(testValidateUsageErrFmt, err)
+	}
+
+	want := []violationSummary{
+		{file: testAlphaPayloadPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeKey), line: 2, column: 18},
+		{file: testAlphaPayloadPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeValue), line: 2, column: 22},
+		{file: testZetaLaterPath, owner: testOwnerLater, category: string(anyCategoryCallExprFun), line: 2, column: 23},
+		{file: testZetaLaterPath, owner: testOwnerLater, category: string(anyCategoryCallExprFun), line: 2, column: 31},
+	}
+
+	if got := collectViolationSummaries(gotReversed); !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected reversed-root ordering:\ngot: %#v\nwant: %#v", got, want)
+	}
+	if got := collectViolationSummaries(gotCanonical); !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected canonical-root ordering:\ngot: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestSortViolationsOrdersByFileLineColumnCategoryAndOwner(t *testing.T) {
+	violations := []Error{
+		{
+			File:   testZetaLaterPath,
+			Line:   1,
+			Column: 1,
+			Identity: FindingIdentity{
+				File:     testZetaLaterPath,
+				Owner:    testOwnerLater,
+				Category: string(anyCategoryCallExprFun),
+			},
+		},
+		{
+			File:   testAlphaPayloadPath,
+			Line:   2,
+			Column: 1,
+			Identity: FindingIdentity{
+				File:     testAlphaPayloadPath,
+				Owner:    testOwnerPayload,
+				Category: string(anyCategoryMapTypeValue),
+			},
+		},
+		{
+			File:   testAlphaPayloadPath,
+			Line:   1,
+			Column: 2,
+			Identity: FindingIdentity{
+				File:     testAlphaPayloadPath,
+				Owner:    "Beta",
+				Category: string(anyCategoryFieldType),
+			},
+		},
+		{
+			File:   testAlphaPayloadPath,
+			Line:   1,
+			Column: 1,
+			Identity: FindingIdentity{
+				File:     testAlphaPayloadPath,
+				Owner:    "Zulu",
+				Category: string(anyCategoryMapTypeValue),
+			},
+		},
+		{
+			File:   testAlphaPayloadPath,
+			Line:   1,
+			Column: 1,
+			Identity: FindingIdentity{
+				File:     testAlphaPayloadPath,
+				Owner:    "Alpha",
+				Category: string(anyCategoryMapTypeValue),
+			},
+		},
+		{
+			File:   testAlphaPayloadPath,
+			Line:   1,
+			Column: 1,
+			Identity: FindingIdentity{
+				File:     testAlphaPayloadPath,
+				Owner:    testOwnerPayload,
+				Category: string(anyCategoryMapTypeKey),
+			},
+		},
+	}
+
+	sortViolations(violations)
+
+	got := collectViolationSummaries(violations)
+	want := []violationSummary{
+		{file: testAlphaPayloadPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeKey), line: 1, column: 1},
+		{file: testAlphaPayloadPath, owner: "Alpha", category: string(anyCategoryMapTypeValue), line: 1, column: 1},
+		{file: testAlphaPayloadPath, owner: "Zulu", category: string(anyCategoryMapTypeValue), line: 1, column: 1},
+		{file: testAlphaPayloadPath, owner: "Beta", category: string(anyCategoryFieldType), line: 1, column: 2},
+		{file: testAlphaPayloadPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeValue), line: 2, column: 1},
+		{file: testZetaLaterPath, owner: testOwnerLater, category: string(anyCategoryCallExprFun), line: 1, column: 1},
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected sorted violations:\ngot: %#v\nwant: %#v", got, want)
 	}
 }
 
@@ -579,6 +701,7 @@ type violationSummary struct {
 	owner    string
 	category string
 	line     int
+	column   int
 }
 
 func collectUsageSummaries(t *testing.T, src string) []usageSummary {
@@ -597,6 +720,20 @@ func collectUsageSummaries(t *testing.T, src string) []usageSummary {
 			category: anyUsageCategory(usage.identity.Category),
 			owner:    usage.identity.Owner,
 			line:     fset.Position(usage.pos).Line,
+		})
+	}
+	return summaries
+}
+
+func collectViolationSummaries(violations []Error) []violationSummary {
+	summaries := make([]violationSummary, 0, len(violations))
+	for _, violation := range violations {
+		summaries = append(summaries, violationSummary{
+			file:     violation.Identity.File,
+			owner:    violation.Identity.Owner,
+			category: violation.Identity.Category,
+			line:     violation.Line,
+			column:   violation.Column,
 		})
 	}
 	return summaries

@@ -39,6 +39,7 @@ Packages:
 - Exit `1`: analyzer/runtime/validation error.
 - Exit `2`: invalid CLI usage or flag parsing error.
 - On diagnostics, prints `file:line:column` and a reason.
+- Diagnostics are emitted deterministically sorted by `file`, `line`, `column`, `category`, and `owner`.
 
 ### Allowlist Schema
 
