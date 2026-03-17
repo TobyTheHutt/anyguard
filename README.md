@@ -102,6 +102,9 @@ Finding identity:
 
 - File identity is the normalized repository-relative path used for allowlist matching and `Error.File`
 - Paths use slash separators and omit a leading `./`
+- Analyzer mode resolves file identity only from the configured or detected repository root
+- If a file does not resolve canonically under that repository root, analysis fails closed with an error
+- `anyguard` does not infer file identity from GOPATH layout, package import paths, or basename fallbacks
 - Owner identity is derived directly from the owning syntax node at collection time, not from positional or range overlap
 - `*ast.TypeSpec` uses the type name
 - `*ast.ValueSpec` uses the first declared name in source order
@@ -117,7 +120,7 @@ Failure semantics:
 - Allowlist read, parse, and validation errors halt analysis with an error
 - Stale, unresolved, malformed, or ambiguous allowlist selectors halt analysis with an error
 - Root resolution, filesystem traversal, and Go parse errors halt CLI validation with an error
-- Analyzer path resolution fails only after repository root, GOPATH, and package path derivation have all failed
+- Analyzer path resolution fails closed when a file cannot be mapped to a canonical repository-relative path under the repository root
 - Analyzer files with no filename or no token file are skipped
 - Changing the supported slots above requires an explicit README update because this section is the public compatibility contract
 

@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/tools/go/analysis"
@@ -19,6 +20,13 @@ const (
 	testPkgViolations  = "violations"
 	testPkgAllowed     = "allowed"
 	testPkgFiltered    = "filtered"
+	testPkgDir         = "pkg"
+	testNilPkgPath     = "pkg/nilpkg.go"
+	testAnalyzerSrc    = "package pkg\ntype T map[string]any\n"
+	testCreateSource   = "create source dir: %v"
+	testWriteSource    = "write source file: %v"
+	testParseSource    = "parse source: %v"
+	testUnexpectedErr  = "unexpected error: %v"
 )
 
 func TestAnalyzer(t *testing.T) {
@@ -47,18 +55,18 @@ func TestAnalyzerRespectsRoots(t *testing.T) {
 
 func TestCollectAnalyzerFilesWithNilPackage(t *testing.T) {
 	base := t.TempDir()
-	sourcePath := filepath.Join(base, "pkg", "nilpkg.go")
+	sourcePath := filepath.Join(base, testNilPkgPath)
 	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o750); err != nil {
-		t.Fatalf("create source dir: %v", err)
+		t.Fatalf(testCreateSource, err)
 	}
-	if err := os.WriteFile(sourcePath, []byte("package pkg\ntype T map[string]any\n"), 0o600); err != nil {
-		t.Fatalf("write source file: %v", err)
+	if err := os.WriteFile(sourcePath, []byte(testAnalyzerSrc), 0o600); err != nil {
+		t.Fatalf(testWriteSource, err)
 	}
 
 	fset := token.NewFileSet()
 	parsed, err := parser.ParseFile(fset, sourcePath, nil, parser.ParseComments)
 	if err != nil {
-		t.Fatalf("parse source: %v", err)
+		t.Fatalf(testParseSource, err)
 	}
 
 	pass := &analysis.Pass{
@@ -73,8 +81,39 @@ func TestCollectAnalyzerFilesWithNilPackage(t *testing.T) {
 	if len(files) != 1 {
 		t.Fatalf("expected one file, got %d", len(files))
 	}
-	if got, want := files[0].relPath, "pkg/nilpkg.go"; got != want {
+	if got, want := files[0].relPath, testNilPkgPath; got != want {
 		t.Fatalf("unexpected relative path: got %q want %q", got, want)
+	}
+}
+
+func TestCollectAnalyzerFilesRejectsAmbiguousIdentity(t *testing.T) {
+	repoRoot := t.TempDir()
+	gopathRoot := filepath.Join(t.TempDir(), "src", "example.com", "project")
+	sourcePath := filepath.Join(gopathRoot, testPkgDir, "outside.go")
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o750); err != nil {
+		t.Fatalf(testCreateSource, err)
+	}
+	if err := os.WriteFile(sourcePath, []byte(testAnalyzerSrc), 0o600); err != nil {
+		t.Fatalf(testWriteSource, err)
+	}
+
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, sourcePath, nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf(testParseSource, err)
+	}
+
+	pass := &analysis.Pass{
+		Fset:  fset,
+		Files: []*ast.File{parsed},
+	}
+
+	_, err = collectAnalyzerFiles(pass, repoRoot, []string{DefaultRoots})
+	if err == nil {
+		t.Fatalf("expected canonical path resolution error")
+	}
+	if !strings.Contains(err.Error(), "cannot establish canonical repository-relative path") {
+		t.Fatalf(testUnexpectedErr, err)
 	}
 }
 

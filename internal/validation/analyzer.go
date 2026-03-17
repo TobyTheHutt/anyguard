@@ -25,7 +25,6 @@ const (
 	flagRepoRoot  = "repo-root"
 
 	errNoRootsProvided = "no roots provided for any usage validation"
-	goPathSrcSegment   = "/src/"
 )
 
 // NewAnalyzer constructs a go/analysis analyzer for any-usage validation.
@@ -176,11 +175,6 @@ func collectAnalyzerFiles(pass *analysis.Pass, repoRoot string, roots []string) 
 		return nil, errors.New("no usable roots after normalization")
 	}
 
-	pkgPath := ""
-	if pass.Pkg != nil {
-		pkgPath = pass.Pkg.Path()
-	}
-
 	files := make([]analyzerFile, 0, len(pass.Files))
 	for _, file := range pass.Files {
 		pos := pass.Fset.PositionFor(file.Package, false)
@@ -188,7 +182,7 @@ func collectAnalyzerFiles(pass *analysis.Pass, repoRoot string, roots []string) 
 			continue
 		}
 
-		relPath, err := relativePath(repoRoot, pos.Filename, pkgPath)
+		relPath, err := relativePath(repoRoot, pos.Filename)
 		if err != nil {
 			return nil, fmt.Errorf("compute relative path for %s: %w", pos.Filename, err)
 		}
@@ -209,35 +203,24 @@ func collectAnalyzerFiles(pass *analysis.Pass, repoRoot string, roots []string) 
 	return files, nil
 }
 
-func relativePath(repoRoot, absPath, pkgPath string) (string, error) {
+func relativePath(repoRoot, absPath string) (string, error) {
 	relPath, err := filepath.Rel(repoRoot, absPath)
-	if err == nil {
-		normalized := normalizePath(relPath)
-		if !isEscapingPath(normalized) {
-			return normalized, nil
-		}
+	if err != nil {
+		return "", fmt.Errorf("cannot establish canonical repository-relative path: %w", err)
 	}
-
-	if gopathRel, ok := pathFromGoPathSrc(absPath); ok {
-		return gopathRel, nil
+	normalized := normalizePath(relPath)
+	if normalized == "" || isEscapingPath(normalized) {
+		return "", fmt.Errorf(
+			"cannot establish canonical repository-relative path for %s under repo root %s",
+			filepath.Clean(absPath),
+			filepath.Clean(repoRoot),
+		)
 	}
-	if pkgPath == "" {
-		return "", errors.New("cannot resolve relative file path")
-	}
-	return normalizePath(filepath.Join(pkgPath, filepath.Base(absPath))), nil
+	return normalized, nil
 }
 
 func isEscapingPath(path string) bool {
 	return path == ".." || strings.HasPrefix(path, "../")
-}
-
-func pathFromGoPathSrc(absPath string) (string, bool) {
-	slash := filepath.ToSlash(absPath)
-	idx := strings.Index(slash, goPathSrcSegment)
-	if idx == -1 {
-		return "", false
-	}
-	return normalizePath(slash[idx+len(goPathSrcSegment):]), true
 }
 
 func normalizeConfiguredRoots(roots []string, repoRoot string) []string {

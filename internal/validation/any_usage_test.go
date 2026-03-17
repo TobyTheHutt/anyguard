@@ -73,7 +73,7 @@ func TestLoadAnyAllowlistRejectsLegacyEntryShape(t *testing.T) {
 		t.Fatalf("expected legacy entry shape error")
 	}
 	if !strings.Contains(err.Error(), "legacy allowlist entry shape is unsupported") {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(testUnexpectedErrFmt, err)
 	}
 }
 
