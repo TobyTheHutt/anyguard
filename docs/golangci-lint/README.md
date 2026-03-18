@@ -46,6 +46,21 @@ linters:
 - `roots` (string or list): roots to analyze. Default is `./...`.
 - `repo-root` (string): optional repository root override for path resolution.
 
+## Upstream readiness
+
+For maintainers evaluating possible core inclusion:
+
+- The normative spec is the root [`Detection Contract`](../../README.md#detection-contract), [`Allowlist Schema`](../../README.md#allowlist-schema), and [`Behavior`](../../README.md#behavior).
+- Supported syntax categories are exactly the AST child slots enumerated in the detection contract. Anything outside that list is out of scope and intentionally silent.
+- Each finding has one exact identity: `{path, owner, category}`. Allowlist matching is exact on that identity only.
+- The analyzer fails closed on unresolved file identity, allowlist parse/validation errors, stale or ambiguous selectors, and traversal or parse failures.
+- Reporting is deterministic: syntax only, no type info, no scoring, no heuristic ranking, and stable sort order by `file`, `line`, `column`, `category`, and `owner`.
+- The false-positive boundary is explicit in the detection contract. The syntax-only `CallExpr` and index-form matches are documented there and are suppressible with an exact allowlist selector or `//nolint:anyguard`.
+- Allowlist strictness is deliberate in schema version `2`: no broad file-level or owner-only exceptions, no duplicate selectors, and no selectors that fail to resolve to a current finding.
+- Non-goals: type-parameter constraints, broader unsafe-dynamic-use detection, or claims that every finding is a bug or security issue.
+- Adjacent linters such as `forbidigo`, `depguard`, `asasalint`, and `ireturn` cover different scopes: identifier bans, import policy, a variadic-call bug pattern, and interface-return style. `anyguard` governs only concrete `any` usage in the documented syntax slots.
+- The right framing is policy linter, not detector. It enforces an explicit repository policy over `any`; upstream inclusion is still not guaranteed.
+
 ## Run
 
 ```bash

@@ -87,7 +87,7 @@ Each entry must provide an exact `selector` with the canonical `{path, owner, ca
 
 Nested `any` is reportable only when the nested identifier still appears in one of those slots. For example, `map[string][]any` reports because the innermost `any` is the `Elt` of an `*ast.ArrayType`.
 
-Unsupported and ambiguous cases:
+#### Unsupported and ambiguous cases
 
 - Type parameter constraints such as `func Use[T any](v T) {}` and `type Box[T any] struct{}`
 - In those examples, `any` constrains `T`. It is not a concrete type position like `func Use(v any) {}` or `type Value = any`
@@ -99,7 +99,7 @@ Unsupported and ambiguous cases:
 - Example false positive, `Box[int, any]` style syntax reports because the second slot matches `*ast.IndexListExpr.Indices[i]`
 - These syntax-only matches can be suppressed with an exact allowlist selector or with `//nolint:anyguard` on the same line or the previous line
 
-Finding identity:
+#### Finding identity
 
 - File identity is the normalized repository-relative path used for allowlist matching and `Error.File`
 - Paths use slash separators and omit a leading `./`
@@ -116,7 +116,7 @@ Finding identity:
 - Owner or category are never inferred during allowlist matching
 - A selector that does not resolve to a current finding is treated as a configuration error
 
-Failure semantics:
+#### Failure semantics
 
 - Allowlist read, parse, and validation errors halt analysis with an error
 - Stale, unresolved, malformed, or ambiguous allowlist selectors halt analysis with an error
@@ -144,6 +144,7 @@ golangci-lint run
 - Stable plugin import path: `github.com/tobythehutt/anyguard/plugin`
 - Plugin name in `.golangci.yml`: `anyguard`
 - Integration docs and examples: `docs/golangci-lint/README.md`
+- Upstream readiness notes: `docs/golangci-lint/README.md#upstream-readiness`
 
 #### core integration
 
