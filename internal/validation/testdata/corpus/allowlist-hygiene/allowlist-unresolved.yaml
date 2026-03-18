@@ -1,0 +1,7 @@
+version: 2
+entries:
+  - selector:
+      path: pkg/api/missing.go
+      owner: Payload
+      category: "*ast.MapType.Value"
+    description: unresolved selector

@@ -1,0 +1,7 @@
+version: 2
+entries:
+  - selector:
+      path: pkg/api/payload.go
+      owner: Paylod
+      category: "*ast.MapType.Value"
+    description: typoed owner symbol
