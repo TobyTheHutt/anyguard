@@ -1,0 +1,67 @@
+version: 2
+entries:
+  - selector:
+      path: pkg/api/supported.go
+      owner: FieldTypeDisallowed
+      category: "*ast.Field.Type"
+    description: allow parameter field type
+  - selector:
+      path: pkg/api/supported.go
+      owner: ValueSpecDisallowed
+      category: "*ast.ValueSpec.Type"
+    description: allow value spec type
+  - selector:
+      path: pkg/api/supported.go
+      owner: TypeSpecDisallowed
+      category: "*ast.TypeSpec.Type"
+    description: allow type alias
+  - selector:
+      path: pkg/api/supported.go
+      owner: ArrayTypeDisallowed
+      category: "*ast.ArrayType.Elt"
+    description: allow array element type
+  - selector:
+      path: pkg/api/supported.go
+      owner: MapKeyDisallowed
+      category: "*ast.MapType.Key"
+    description: allow map key type
+  - selector:
+      path: pkg/api/supported.go
+      owner: MapValueDisallowed
+      category: "*ast.MapType.Value"
+    description: allow map value type
+  - selector:
+      path: pkg/api/supported.go
+      owner: ChanTypeDisallowed
+      category: "*ast.ChanType.Value"
+    description: allow channel element type
+  - selector:
+      path: pkg/api/supported.go
+      owner: StarTypeDisallowed
+      category: "*ast.StarExpr.X"
+    description: allow pointer target type
+  - selector:
+      path: pkg/api/supported.go
+      owner: EllipsisDisallowed
+      category: "*ast.Ellipsis.Elt"
+    description: allow variadic element type
+  - selector:
+      path: pkg/api/supported.go
+      owner: TypeAssertDisallowed
+      category: "*ast.TypeAssertExpr.Type"
+    description: allow type assertion target
+  - selector:
+      path: pkg/api/supported.go
+      owner: CallExprDisallowed
+      category: "*ast.CallExpr.Fun"
+    description: allow syntax-only any call
+  - selector:
+      path: pkg/api/supported.go
+      owner: IndexExprDisallowed
+      category: "*ast.IndexExpr.Index"
+    description: allow syntax-only any index
+  - selector:
+      path: pkg/api/supported.go
+      owner: IndexListDisallowed
+      category: "*ast.IndexListExpr.Indices"
+    description: allow syntax-only any index list

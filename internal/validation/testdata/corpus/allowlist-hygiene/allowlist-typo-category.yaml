@@ -1,0 +1,7 @@
+version: 2
+entries:
+  - selector:
+      path: pkg/api/payload.go
+      owner: Payload
+      category: "*ast.MapTyp.Value"
+    description: typoed category
