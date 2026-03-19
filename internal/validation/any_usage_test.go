@@ -28,6 +28,9 @@ const (
 	testOwnerPayload           = "Payload"
 	testOwnerUse               = "Use"
 	testOwnerLater             = "Later"
+	testOwnerAlpha             = "Alpha"
+	testOwnerBeta              = "Beta"
+	testOwnerZulu              = "Zulu"
 	testSamplePath             = "sample.go"
 	testPayloadSource          = "package api\ntype Payload map[string]any\n"
 	testAlphaPayloadPath       = "pkg/alpha/payload.go"
@@ -568,6 +571,36 @@ func TestValidateAnyUsageSortsViolationsDeterministicallyAcrossRoots(t *testing.
 	}
 }
 
+func TestCollectFindingsSortsDeterministicallyAcrossRoots(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, filepath.Join(base, testZetaLaterPath), testZetaLaterSource)
+	writeFile(t, filepath.Join(base, testAlphaPayloadPath), testAlphaPayloadSource)
+
+	gotReversed, err := collectFindings(base, []string{"pkg/zeta", "pkg/alpha"}, nil)
+	if err != nil {
+		t.Fatalf("collect findings reversed roots: %v", err)
+	}
+
+	gotCanonical, err := collectFindings(base, []string{"pkg/alpha", "pkg/zeta"}, nil)
+	if err != nil {
+		t.Fatalf("collect findings canonical roots: %v", err)
+	}
+
+	want := []violationSummary{
+		{file: testAlphaPayloadPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeKey), line: 2, column: 18},
+		{file: testAlphaPayloadPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeValue), line: 2, column: 22},
+		{file: testZetaLaterPath, owner: testOwnerLater, category: string(anyCategoryCallExprFun), line: 2, column: 23},
+		{file: testZetaLaterPath, owner: testOwnerLater, category: string(anyCategoryCallExprFun), line: 2, column: 31},
+	}
+
+	if got := collectFindingSummaries(gotReversed); !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected reversed-root finding order:\ngot: %#v\nwant: %#v", got, want)
+	}
+	if got := collectFindingSummaries(gotCanonical); !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected canonical-root finding order:\ngot: %#v\nwant: %#v", got, want)
+	}
+}
+
 func TestSortViolationsOrdersByFileLineColumnCategoryAndOwner(t *testing.T) {
 	violations := []Error{
 		{
@@ -646,6 +679,49 @@ func TestSortViolationsOrdersByFileLineColumnCategoryAndOwner(t *testing.T) {
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected sorted violations:\ngot: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestSortCollectedFindingsOrdersByFileLineColumnCategoryOwnerCodeAndSuppression(t *testing.T) {
+	const (
+		testCodeLater     = "later"
+		testCodeValueLate = "value-late"
+		testCodeBeta      = "beta"
+		testCodeZulu      = "zulu"
+		testCodeAlpha     = "alpha"
+		testCodeKey       = "key"
+		testCodeAAA       = "aaa"
+		testCodeBBB       = "bbb"
+	)
+
+	findings := []collectedFinding{
+		testCollectedFinding(testZetaLaterPath, testOwnerLater, anyCategoryCallExprFun, 1, 1, testCodeLater, false),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, 2, 1, testCodeValueLate, false),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerBeta, anyCategoryFieldType, 1, 2, testCodeBeta, false),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerZulu, anyCategoryMapTypeValue, 1, 1, testCodeZulu, false),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerAlpha, anyCategoryMapTypeValue, 1, 1, testCodeAlpha, false),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeKey, 1, 1, testCodeKey, false),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, 1, 1, testCodeAAA, false),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, 1, 1, testCodeBBB, false),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, 1, 1, testCodeBBB, true),
+	}
+
+	sortCollectedFindings(findings)
+
+	want := []collectedFinding{
+		testCollectedFinding(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeKey, 1, 1, testCodeKey, false),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerAlpha, anyCategoryMapTypeValue, 1, 1, testCodeAlpha, false),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, 1, 1, testCodeAAA, false),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, 1, 1, testCodeBBB, false),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, 1, 1, testCodeBBB, true),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerZulu, anyCategoryMapTypeValue, 1, 1, testCodeZulu, false),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerBeta, anyCategoryFieldType, 1, 2, testCodeBeta, false),
+		testCollectedFinding(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, 2, 1, testCodeValueLate, false),
+		testCollectedFinding(testZetaLaterPath, testOwnerLater, anyCategoryCallExprFun, 1, 1, testCodeLater, false),
+	}
+
+	if !reflect.DeepEqual(findings, want) {
+		t.Fatalf("unexpected sorted findings:\ngot: %#v\nwant: %#v", findings, want)
 	}
 }
 
@@ -737,6 +813,36 @@ func collectViolationSummaries(violations []Error) []violationSummary {
 		})
 	}
 	return summaries
+}
+
+func collectFindingSummaries(findings []collectedFinding) []violationSummary {
+	summaries := make([]violationSummary, 0, len(findings))
+	for _, finding := range findings {
+		summaries = append(summaries, violationSummary{
+			file:     finding.identity.File,
+			owner:    finding.identity.Owner,
+			category: finding.identity.Category,
+			line:     finding.line,
+			column:   finding.column,
+		})
+	}
+	return summaries
+}
+
+func testCollectedFinding(
+	path, owner string,
+	category anyUsageCategory,
+	line, column int,
+	code string,
+	suppressed bool,
+) collectedFinding {
+	return collectedFinding{
+		identity:           newFindingIdentity(path, owner, category),
+		line:               line,
+		column:             column,
+		code:               code,
+		suppressedByNolint: suppressed,
+	}
 }
 
 func writeAllowlist(t *testing.T, path string, allowlist AnyAllowlist) {

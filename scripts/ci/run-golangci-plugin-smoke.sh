@@ -43,8 +43,15 @@ if [[ "${status}" -eq 0 ]]; then
 	exit 1
 fi
 
-if ! grep -q "pkg/bad/bad.go" "${output_file}"; then
-	echo "expected diagnostic for pkg/bad/bad.go"
+expected_locations=$'pkg/alpha/payload.go:3:14\npkg/alpha/payload.go:4:23\npkg/bad/bad.go:3:25\npkg/zeta/later.go:4:6\npkg/zeta/later.go:5:6'
+actual_locations="$(grep -oE 'pkg/[^:]+:[0-9]+:[0-9]+' "${output_file}" || true)"
+
+if [[ "${actual_locations}" != "${expected_locations}" ]]; then
+	echo "unexpected diagnostic order from module plugin smoke run"
+	echo "got:"
+	printf '%s\n' "${actual_locations}"
+	echo "want:"
+	printf '%s\n' "${expected_locations}"
 	exit 1
 fi
 

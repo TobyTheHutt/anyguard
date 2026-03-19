@@ -151,6 +151,7 @@ func collectFindings(baseAbs string, roots, globs []string) ([]collectedFinding,
 		}
 		findings = append(findings, rootFindings...)
 	}
+	sortCollectedFindings(findings)
 	return findings, nil
 }
 
@@ -411,6 +412,30 @@ func violationsFromFindings(findings []collectedFinding, index anyAllowlistIndex
 	}
 	sortViolations(violations)
 	return violations
+}
+
+func sortCollectedFindings(findings []collectedFinding) {
+	sort.Slice(findings, func(i, j int) bool {
+		left := findings[i]
+		right := findings[j]
+
+		switch {
+		case left.identity.File != right.identity.File:
+			return left.identity.File < right.identity.File
+		case left.line != right.line:
+			return left.line < right.line
+		case left.column != right.column:
+			return left.column < right.column
+		case left.identity.Category != right.identity.Category:
+			return left.identity.Category < right.identity.Category
+		case left.identity.Owner != right.identity.Owner:
+			return left.identity.Owner < right.identity.Owner
+		case left.code != right.code:
+			return left.code < right.code
+		default:
+			return !left.suppressedByNolint && right.suppressedByNolint
+		}
+	})
 }
 
 func sortViolations(violations []Error) {
