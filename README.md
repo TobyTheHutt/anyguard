@@ -39,7 +39,7 @@ Packages:
 - Exit `1`: analyzer/runtime/validation error.
 - Exit `2`: invalid CLI usage or flag parsing error.
 - On diagnostics, prints `file:line:column` and a reason.
-- Diagnostics are emitted deterministically sorted by `file`, `line`, `column`, `category`, and `owner`.
+- CLI, analyzer, and golangci-lint plugin diagnostics are a compatibility guarantee: they are emitted deterministically in `file`, `line`, `column`, `category`, `owner` order, independent of root order, filesystem traversal, map iteration, formatting noise, and irrelevant comments.
 
 ### Allowlist Schema
 
@@ -143,6 +143,7 @@ golangci-lint run
 
 - Stable plugin import path: `github.com/tobythehutt/anyguard/plugin`
 - Plugin name in `.golangci.yml`: `anyguard`
+- Plugin diagnostics follow the same deterministic ordering contract as the CLI and public analyzer.
 - Integration docs and examples: `docs/golangci-lint/README.md`
 - Upstream readiness notes: `docs/golangci-lint/README.md#upstream-readiness`
 
@@ -152,6 +153,7 @@ For direct integration into `golangci-lint`, import the public analyzer entrypoi
 
 - Module path: `github.com/tobythehutt/anyguard`
 - Analyzer constructor: `anyguard.NewAnalyzer()`
+- Analyzer diagnostics follow the same deterministic ordering contract as the CLI and module plugin.
 
 ### License
 

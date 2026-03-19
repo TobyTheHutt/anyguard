@@ -5,6 +5,7 @@
 - Module path: `github.com/tobythehutt/anyguard`
 - Plugin import path: `github.com/tobythehutt/anyguard/plugin`
 - Linter name in `.golangci.yml`: `anyguard`
+- Module-plugin diagnostics follow the same deterministic ordering compatibility guarantee as the CLI and public analyzer.
 
 ## Build a custom golangci-lint
 
@@ -54,7 +55,8 @@ For maintainers evaluating possible core inclusion:
 - Supported syntax categories are exactly the AST child slots enumerated in the detection contract. Anything outside that list is out of scope and intentionally silent.
 - Each finding has one exact identity: `{path, owner, category}`. Allowlist matching is exact on that identity only.
 - The analyzer fails closed on unresolved file identity, allowlist parse/validation errors, stale or ambiguous selectors, and traversal or parse failures.
-- Reporting is deterministic: syntax only, no type info, no scoring, no heuristic ranking, and stable sort order by `file`, `line`, `column`, `category`, and `owner`.
+- CLI, analyzer, and module-plugin reporting order is a compatibility guarantee: syntax only, no type info, no scoring, no heuristic ranking, and stable sort order by `file`, `line`, `column`, `category`, and `owner`.
+- Ordering does not depend on configured root order, filesystem traversal order, or map iteration.
 - The false-positive boundary is explicit in the detection contract. The syntax-only `CallExpr` and index-form matches are documented there and are suppressible with an exact allowlist selector or `//nolint:anyguard`.
 - Allowlist strictness is deliberate in schema version `2`: no broad file-level or owner-only exceptions, no duplicate selectors, and no selectors that fail to resolve to a current finding.
 - Non-goals: type-parameter constraints, broader unsafe-dynamic-use detection, or claims that every finding is a bug or security issue.
