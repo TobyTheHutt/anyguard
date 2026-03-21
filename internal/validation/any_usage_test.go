@@ -471,6 +471,97 @@ func Use(value any) {
 	}
 }
 
+func TestResolvesToPredeclaredAny(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		line int
+		want bool
+	}{
+		{
+			name: "universe alias in field type",
+			src: `package p
+
+func Use(value any) {}
+`,
+			line: 3,
+			want: true,
+		},
+		{
+			name: "universe alias in conversion callee",
+			src: `package p
+
+func Use(value any) {
+	_ = any(value)
+}
+`,
+			line: 4,
+			want: true,
+		},
+		{
+			name: "user defined any declaration",
+			src: `package p
+
+type any interface{}
+`,
+			line: 3,
+			want: false,
+		},
+		{
+			name: "user defined any use",
+			src: `package p
+
+type any interface{}
+type Payload map[string]any
+`,
+			line: 4,
+			want: false,
+		},
+		{
+			name: "shadowed function any call",
+			src: `package p
+
+func any(v int) int { return v }
+
+func Use() {
+	_ = any(1)
+}
+`,
+			line: 6,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, testSamplePath, tt.src, parser.ParseComments)
+			if err != nil {
+				t.Fatalf(testParseFileErrFmt, err)
+			}
+
+			info := typeCheckTestFile(fset, file)
+			ident := findAnyIdentOnLine(t, fset, file, tt.line)
+			if got := resolvesToPredeclaredAny(ident, info); got != tt.want {
+				t.Fatalf("resolvesToPredeclaredAny(line %d) = %t, want %t", tt.line, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolvesToPredeclaredAnyWithoutTypeInfo(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, testSamplePath, "package p\n\nfunc Use(value any) {}\n", parser.ParseComments)
+	if err != nil {
+		t.Fatalf(testParseFileErrFmt, err)
+	}
+
+	ident := findAnyIdentOnLine(t, fset, file, 3)
+	if resolvesToPredeclaredAny(ident, nil) {
+		t.Fatal("expected nil type info to stay quiet")
+	}
+}
+
 func TestCollectAnyUsagesIgnoresShadowedAnyAcrossSupportedSlots(t *testing.T) {
 	src := `package p
 
@@ -1182,6 +1273,30 @@ func summarizeUsages(fset *token.FileSet, usages []anyUsage) []usageSummary {
 		})
 	}
 	return summaries
+}
+
+func findAnyIdentOnLine(t *testing.T, fset *token.FileSet, file *ast.File, line int) *ast.Ident {
+	t.Helper()
+
+	var ident *ast.Ident
+	ast.Inspect(file, func(node ast.Node) bool {
+		candidate, ok := node.(*ast.Ident)
+		if !ok || candidate.Name != anyName {
+			return true
+		}
+		if fset.Position(candidate.Pos()).Line != line {
+			return true
+		}
+		if ident != nil {
+			t.Fatalf("expected one any identifier on line %d", line)
+		}
+		ident = candidate
+		return true
+	})
+	if ident == nil {
+		t.Fatalf("expected any identifier on line %d", line)
+	}
+	return ident
 }
 
 func dirEntryFromPath(t *testing.T, path string) fs.DirEntry {
