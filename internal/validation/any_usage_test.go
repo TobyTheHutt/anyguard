@@ -775,7 +775,7 @@ func Generic[T []any](v T) {}
 	}
 }
 
-func TestCollectAnyUsagesReportsAmbiguousSlotsForUniverseAnyAlias(t *testing.T) {
+func TestCollectAnyUsagesReportsCompatibilitySlotsForUniverseAnyAlias(t *testing.T) {
 	src := `package p
 
 type Single[T any] struct{}
@@ -796,7 +796,7 @@ func Use(value any) {
 		{category: anyCategoryIndexListIndex, owner: "Use", line: 9},
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected ambiguous-slot usages:\ngot: %#v\nwant: %#v", got, want)
+		t.Fatalf("unexpected compatibility-slot usages:\ngot: %#v\nwant: %#v", got, want)
 	}
 }
 

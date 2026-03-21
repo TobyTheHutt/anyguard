@@ -8,8 +8,8 @@
 - Module-plugin diagnostics follow the same deterministic ordering compatibility guarantee as the CLI and public analyzer.
 - The plugin uses the same AST-slot-driven contract as the CLI and public analyzer.
 - It requires golangci-lint `typesinfo` load mode so supported-slot matching can use `analysis.Pass.TypesInfo`.
-- It reports `any` only in explicitly supported AST child slots and resolves the universe `any` alias via `types.Info` to suppress shadowed declarations.
-- It is not a full type-position semantic classifier, so supported-slot cases such as `any(1)`, `Single[any]{}`, and `Box[int, any]{}` remain reportable by contract.
+- It reports `any` only in explicitly supported AST child slots, and every supported slot resolves the universe `any` alias via `types.Info` to suppress shadowed declarations.
+- The detection contract distinguishes semantically resolved type-position slots from the three semantically resolved compatibility slots, and there are no syntax-only slots left in the implementation.
 
 ## Build a custom golangci-lint
 
@@ -67,16 +67,16 @@ linters:
 For maintainers evaluating possible core inclusion:
 
 - The normative spec is the root [`Behavior`](../../README.md#behavior), [`Comparison With Generic Ban-Pattern Linters`](../../README.md#comparison-with-generic-ban-pattern-linters), [`Allowlist Schema`](../../README.md#allowlist-schema), and [`Detection Contract`](../../README.md#detection-contract).
-- Supported syntax categories are exactly the AST child slots enumerated in the detection contract. The contract is AST-slot-driven with universe-`any` alias resolution. Anything outside that list is out of scope and intentionally silent.
+- Supported syntax categories are exactly the AST child slots in the detection contract. Every supported slot resolves the universe `any` alias. The only slots outside dedicated type positions are the three compatibility slots. Anything outside that list is out of scope and intentionally silent.
 - Each finding has one exact identity: `{path, owner, category}`. Allowlist matching is exact on that identity only.
 - The analyzer fails closed on unresolved file identity, allowlist parse/validation errors, stale or ambiguous selectors, and traversal or parse failures.
 - CLI, analyzer, and module-plugin reporting order is a compatibility guarantee: no scoring, no heuristic ranking, and stable sort order by `file`, `line`, `column`, `category`, and `owner`.
 - Ordering does not depend on configured root order, filesystem traversal order, or map iteration.
-- The false-positive boundary is explicit in the detection contract. `*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]` still resolve the universe `any` alias to suppress shadowed declarations, but cases such as `any(1)`, `Single[any]{}`, and `Box[int, any]{}` remain reportable because those slots are supported by contract.
+- False positives should mostly come down to scope. There are no syntax-only slots. `*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]` remain supported compatibility slots, so cases such as `any(1)`, `Single[any]{}`, and `Box[int, any]{}` remain reportable by contract.
 - Allowlist strictness is deliberate in schema version `2`: no broad file-level or owner-only exceptions, no duplicate selectors, and no selectors that fail to resolve to a current finding.
 - Non-goals: type-parameter constraints, broader unsafe-dynamic-use detection, or claims that every finding is a bug or security issue.
 - The root comparison section is the canonical answer to "why not just use an existing ban-pattern linter?": overlap exists at the policy level, but `anyguard` is specifically about exact exceptions, stale-selector rejection, and a documented syntax-slot contract.
-- The right framing is policy linter, not detector. It enforces an explicit repository policy over `any`; upstream inclusion is still not guaranteed.
+- Treat this as a policy linter, not a detector. It enforces repository policy over `any`. Upstream inclusion is still not guaranteed.
 
 ## Run
 

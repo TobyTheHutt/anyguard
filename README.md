@@ -30,9 +30,11 @@ Packages:
 ### Behavior
 
 - Scans `.go` files under configured roots.
-- `anyguard` is AST-slot-driven with limited semantic checking: it reports `any` only in explicitly supported AST child slots.
-- That supported-slot list is the public contract. Findings still require the identifier to resolve to the Go universe `any` alias, which keeps shadowed declarations silent.
-- `anyguard` is not a full type-position semantic classifier. Reviewers using a stricter type-position-only rule may treat supported-slot cases such as `any(1)`, `Single[any]{}`, and `Box[int, any]{}` as false positives, but they remain reportable by contract.
+- `anyguard` is AST-slot-driven and semantically resolved: it reports `any` only in explicitly supported AST child slots, and every report requires the identifier to resolve to the Go universe `any` alias.
+- That supported-slot list is the public contract. Dedicated type-position slots and compatibility slots use the same universe-`any` resolution, which keeps shadowed declarations silent.
+- The detection-contract table below distinguishes semantically resolved type-position slots from the three supported compatibility slots: `*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]`.
+- There are no remaining syntax-only slots in the current implementation.
+- `anyguard` is not a broader classifier for every type-like use. If your policy wants only dedicated type-position fields, the compatibility slots above are the only extra scope.
 - Compares findings against an allowlist.
 - Supports strict selector-based exceptions, exclude globs, and specific `//nolint` instructions.
 - Exception metadata is minimal. `description` is required.
@@ -51,7 +53,7 @@ Packages:
 
 | Concern | Generic ban-pattern linter | `anyguard` |
 | --- | --- | --- |
-| Basic overlap | Usually bans an identifier, token, or textual pattern and reports matches. | Reports `any` only in explicitly supported AST child slots. It also resolves the universe `any` alias so shadowed declarations stay silent. It is not a full type-position semantic classifier, so supported-slot cases such as `any(1)`, `Single[any]{}`, and `Box[int, any]{}` remain reportable by contract. |
+| Basic overlap | Usually bans an identifier, token, or textual pattern and reports matches. | Reports `any` only in explicitly supported AST child slots, and every supported slot resolves the universe `any` alias so shadowed declarations stay silent. The dedicated type-position slots are semantically resolved, and `*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]` remain deliberate compatibility slots for conversions and generic instantiations. |
 | Allowlist precision | Exceptions are often broad file, symbol, regex, or inline suppression patterns. | Each exception must match one exact selector: `{path, owner, category}`. Broad file-level or owner-only exceptions are not supported in schema version `2`. |
 | Stale selector rejection | Suppressions can drift silently after refactors or when the original finding disappears. | Selectors that no longer resolve to a current finding are rejected as stale or typoed configuration. |
 | Canonical finding identity | Findings are often tied to textual matches or positions only. | Each finding has one canonical identity captured as `{path, owner, category}`, and diagnostics are emitted in deterministic order. |
@@ -90,34 +92,35 @@ Each entry must provide an exact `selector` with the canonical `{path, owner, ca
 
 ### Detection Contract
 
-`anyguard` is AST-slot driven. It only reports `any` when the identifier is the direct child of one of the AST slots below, and that supported-slot list is the public contract. Reports also require limited semantic checking: the identifier must resolve to the Go universe `any` alias, which keeps shadowed declarations silent. `anyguard` does not attempt a broader type-position semantic classifier, so supported-slot cases such as `any(1)`, `Single[any]{}`, and `Box[int, any]{}` remain reportable by contract. Anything not listed is unsupported and is not detected or reported (you are welcome to contribute).
+`anyguard` is AST-slot driven. It reports `any` only when the identifier is the direct child of one of the AST slots below, and that supported-slot list is the public contract. Every supported slot uses the same semantic check: the matched identifier must resolve to the Go universe `any` alias. There are no syntax-only slots in the current implementation. The contract splits supported slots into dedicated type-position slots and compatibility slots because Go models conversions and generic instantiations with general expression nodes. Anything not listed is unsupported and is not detected or reported (you are welcome to contribute).
 
 The syntax snippets in this section are mirrored in the corpus fixtures under `internal/validation/testdata/corpus/{supported,boundary,unsupported}` so the documented boundary stays testable.
 
-| Parent AST node | Child slot | Supported syntax |
-| --- | --- | --- |
-| `*ast.Field` | `Type` | Parameter types, result types, struct field types, and interface field or member types |
-| `*ast.ValueSpec` | `Type` | Explicit variable declaration types |
-| `*ast.TypeSpec` | `Type` | Type alias and type definition right hand sides |
-| `*ast.TypeAssertExpr` | `Type` | Type assertions such as `value.(any)` |
-| `*ast.ArrayType` | `Elt` | Array and slice element types |
-| `*ast.MapType` | `Key`, `Value` | Map key and value types |
-| `*ast.ChanType` | `Value` | Channel element types |
-| `*ast.StarExpr` | `X` | Pointer target types |
-| `*ast.Ellipsis` | `Elt` | Variadic parameter element types |
-| `*ast.CallExpr` | `Fun` | Conversions such as `any(value)` when the callee resolves to the universe alias |
-| `*ast.IndexExpr` | `Index` | Single-argument instantiations such as `Box[any]` when the index resolves to the universe alias |
-| `*ast.IndexListExpr` | `Indices[i]` | Multi-argument instantiations such as `Box[int, any]` when the type argument resolves to the universe alias |
+| Parent AST node | Child slot | Resolution kind | Supported syntax |
+| --- | --- | --- | --- |
+| `*ast.Field` | `Type` | Semantically resolved type-position slot | Parameter types, result types, struct field types, and interface field or member types |
+| `*ast.ValueSpec` | `Type` | Semantically resolved type-position slot | Explicit variable declaration types |
+| `*ast.TypeSpec` | `Type` | Semantically resolved type-position slot | Type alias and type definition right hand sides |
+| `*ast.TypeAssertExpr` | `Type` | Semantically resolved type-position slot | Type assertions such as `value.(any)` |
+| `*ast.ArrayType` | `Elt` | Semantically resolved type-position slot | Array and slice element types |
+| `*ast.MapType` | `Key`, `Value` | Semantically resolved type-position slot | Map key and value types |
+| `*ast.ChanType` | `Value` | Semantically resolved type-position slot | Channel element types |
+| `*ast.StarExpr` | `X` | Semantically resolved type-position slot | Pointer target types |
+| `*ast.Ellipsis` | `Elt` | Semantically resolved type-position slot | Variadic parameter element types |
+| `*ast.CallExpr` | `Fun` | Semantically resolved compatibility slot | Conversions such as `any(value)` when the callee resolves to the universe alias |
+| `*ast.IndexExpr` | `Index` | Semantically resolved compatibility slot | Single-argument instantiations such as `Box[any]` when the index resolves to the universe alias |
+| `*ast.IndexListExpr` | `Indices[i]` | Semantically resolved compatibility slot | Multi-argument instantiations such as `Box[int, any]` when the type argument resolves to the universe alias |
 
-`*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]` are deliberate supported-slot checks. They still resolve the universe `any` alias to suppress shadowed declarations, but cases such as `any(1)`, `Single[any]{}`, and `Box[int, any]{}` remain reportable even though a stricter type-position-only rule might exclude them.
+`*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]` remain compatibility slots, not syntax-only exceptions. They still require the universe `any` alias, but they are supported because Go exposes conversions and generic instantiations through expression nodes instead of dedicated type-position AST fields.
 
 Nested `any` is reportable only when the nested identifier still appears in one of those slots. For example, `type NestedArray map[string][]any` reports because the innermost `any` is still the `Elt` of an `*ast.ArrayType`.
 
-#### Unsupported and ambiguous cases
+#### Unsupported and compatibility notes
 
 - Type parameter constraints stay silent because `any` constrains a type parameter instead of occupying a concrete supported slot, for example `func Use[T any](value T) {}`.
-- Any `any` occurrence whose direct parent child AST relationship is not listed above stays silent. That includes identifier names, selectors, assignments, composite literal elements, return expressions, type switch case lists, comments, and string literals; for example `func TypeSwitchCaseList(value interface{}) { switch value.(type) { case any, string: } }`.
-- Each report requires semantic resolution to the universe `any` alias. Shadowed declarations stay silent, for example `func any(v int) int` with `any(1)`, `func Use(values []int) int { any := 0; return values[any] }`, or `type any interface{}; Box[int, any]{}`.
+- Any `any` occurrence whose direct parent child AST relationship is not listed above stays silent. That includes identifier names, selectors, assignments, composite literal elements, return expressions, type switch case lists, comments, and string literals. Example: `func TypeSwitchCaseList(value interface{}) { switch value.(type) { case any, string: } }`.
+- Each report requires semantic resolution to the universe `any` alias. Shadowed declarations stay silent. Examples include `func any(v int) int` with `any(1)`, a function that binds a local `any := 0` before indexing `values[any]`, and a file that defines `type any interface{}` before using `Box[int, any]{}`.
+- False positives should mostly come down to scope. If your policy excludes the three compatibility slots above, `anyguard` will still report them. Shadowed declarations and unsupported syntax stay silent.
 - On invalid or incomplete code, `anyguard` does not guess from bare syntax. It only reports when the identifier can still be resolved as the universe alias.
 - Exact allowlist selectors and `//nolint:anyguard` remain the escape hatches when a resolved universe-`any` usage is intentionally allowed
 

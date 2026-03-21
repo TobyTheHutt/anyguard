@@ -54,14 +54,14 @@ entries:
       path: pkg/api/supported.go
       owner: CallExprDisallowed
       category: "*ast.CallExpr.Fun"
-    description: allow syntax-only any call
+    description: allow compatibility any conversion
   - selector:
       path: pkg/api/supported.go
       owner: IndexExprDisallowed
       category: "*ast.IndexExpr.Index"
-    description: allow syntax-only any index
+    description: allow compatibility any single-argument instantiation
   - selector:
       path: pkg/api/supported.go
       owner: IndexListDisallowed
       category: "*ast.IndexListExpr.Indices"
-    description: allow syntax-only any index list
+    description: allow compatibility any multi-argument instantiation
