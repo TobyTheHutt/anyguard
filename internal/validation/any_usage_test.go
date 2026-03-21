@@ -214,7 +214,24 @@ func TestValidateAnyUsageAllowsTypeParamConstraint(t *testing.T) {
 func TestValidateAnyUsageIgnoresPackageShadowedAnyAcrossFiles(t *testing.T) {
 	base := t.TempDir()
 	writeFile(t, apiPath(base, "defs.go"), "package api\ntype any interface{}\ntype Single[T any] struct{}\ntype Box[T, U any] struct{}\n")
-	writeFile(t, apiPath(base, "uses.go"), "package api\ntype Payload map[string]any\nfunc Use() {\n\t_ = any(1)\n\t_ = Single[any]{}\n\t_ = Box[int, any]{}\n}\n")
+	writeFile(
+		t,
+		apiPath(base, "uses.go"),
+		"package api\n"+
+			"func FieldType(value any) {}\n"+
+			"var ValueSpec any\n"+
+			"type TypeSpec = any\n"+
+			"type Payload map[string]any\n"+
+			"func Use(value interface{}) {\n"+
+			"\tvar local any\n"+
+			"\ttype Hidden = any\n"+
+			"\t_ = value.(any)\n"+
+			"\t_ = any(1)\n"+
+			"\t_ = Single[any]{}\n"+
+			"\t_ = Box[int, any]{}\n"+
+			"\t_ = local\n"+
+			"}\n",
+	)
 
 	violations, err := ValidateAnyUsage(AnyAllowlist{Version: anyAllowlistVersion}, base, []string{testRootAPI})
 	if err != nil {
@@ -222,6 +239,62 @@ func TestValidateAnyUsageIgnoresPackageShadowedAnyAcrossFiles(t *testing.T) {
 	}
 	if len(violations) != 0 {
 		t.Fatalf(testNoViolationsErrFmt, violations)
+	}
+}
+
+func TestCollectAnyUsagesReportsDeclarationSlotsOnlyForPredeclaredAny(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []usageSummary
+	}{
+		{
+			name: "predeclared any",
+			src: `package p
+
+func FieldType(value any) {}
+
+var ValueSpec any
+
+type TypeSpec = any
+
+func TypeAssert(value interface{}) {
+	_ = value.(any)
+}
+`,
+			want: []usageSummary{
+				{category: anyCategoryFieldType, owner: "FieldType", line: 3},
+				{category: anyCategoryValueSpecType, owner: "ValueSpec", line: 5},
+				{category: anyCategoryTypeSpecType, owner: "TypeSpec", line: 7},
+				{category: anyCategoryTypeAssertType, owner: "TypeAssert", line: 10},
+			},
+		},
+		{
+			name: "shadowed any",
+			src: `package p
+
+type any interface{}
+
+func FieldType(value any) {}
+
+var ValueSpec any
+
+type TypeSpec = any
+
+func TypeAssert(value interface{}) {
+	_ = value.(any)
+}
+`,
+			want: []usageSummary{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := collectUsageSummaries(t, tt.src); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("unexpected declaration-slot usages:\ngot: %#v\nwant: %#v", got, tt.want)
+			}
+		})
 	}
 }
 
