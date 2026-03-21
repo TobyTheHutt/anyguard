@@ -51,7 +51,7 @@ linters:
 
 For maintainers evaluating possible core inclusion:
 
-- The normative spec is the root [`Detection Contract`](../../README.md#detection-contract), [`Allowlist Schema`](../../README.md#allowlist-schema), and [`Behavior`](../../README.md#behavior).
+- The normative spec is the root [`Behavior`](../../README.md#behavior), [`Comparison With Generic Ban-Pattern Linters`](../../README.md#comparison-with-generic-ban-pattern-linters), [`Allowlist Schema`](../../README.md#allowlist-schema), and [`Detection Contract`](../../README.md#detection-contract).
 - Supported syntax categories are exactly the AST child slots enumerated in the detection contract. Anything outside that list is out of scope and intentionally silent.
 - Each finding has one exact identity: `{path, owner, category}`. Allowlist matching is exact on that identity only.
 - The analyzer fails closed on unresolved file identity, allowlist parse/validation errors, stale or ambiguous selectors, and traversal or parse failures.
@@ -60,7 +60,7 @@ For maintainers evaluating possible core inclusion:
 - The false-positive boundary is explicit in the detection contract. Ambiguous `CallExpr` and index-form slots are checked with type info, so shadowed identifiers like `func any(int)`, `values[any]` with a local variable, or `type any interface{}; Box[int, any]{}` stay silent.
 - Allowlist strictness is deliberate in schema version `2`: no broad file-level or owner-only exceptions, no duplicate selectors, and no selectors that fail to resolve to a current finding.
 - Non-goals: type-parameter constraints, broader unsafe-dynamic-use detection, or claims that every finding is a bug or security issue.
-- Adjacent linters such as `forbidigo`, `depguard`, `asasalint`, and `ireturn` cover different scopes: identifier bans, import policy, a variadic-call bug pattern, and interface-return style. `anyguard` governs only concrete `any` usage in the documented syntax slots.
+- The root comparison section is the canonical answer to "why not just use an existing ban-pattern linter?": overlap exists at the policy level, but `anyguard` is specifically about exact exceptions, stale-selector rejection, and a documented syntax-slot contract.
 - The right framing is policy linter, not detector. It enforces an explicit repository policy over `any`; upstream inclusion is still not guaranteed.
 
 ## Run
