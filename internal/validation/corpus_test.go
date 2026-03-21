@@ -103,6 +103,34 @@ func TestValidateAnyUsageCorpusDeclarationSlots(t *testing.T) {
 			line:     10,
 			column:   13,
 		},
+		{
+			file:     "pkg/predeclared/local.go",
+			owner:    "LocalPredeclared",
+			category: string(anyCategoryValueSpecType),
+			line:     4,
+			column:   12,
+		},
+		{
+			file:     "pkg/predeclared/local.go",
+			owner:    "LocalPredeclared",
+			category: string(anyCategoryTypeSpecType),
+			line:     5,
+			column:   20,
+		},
+		{
+			file:     "pkg/predeclared/local.go",
+			owner:    "LocalPredeclared",
+			category: string(anyCategoryTypeAssertType),
+			line:     7,
+			column:   13,
+		},
+		{
+			file:     "pkg/predeclared/local.go",
+			owner:    "LocalPredeclared",
+			category: string(anyCategoryFieldType),
+			line:     8,
+			column:   16,
+		},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected declaration-slot corpus violations:\ngot: %#v\nwant: %#v", got, want)
@@ -174,6 +202,48 @@ func TestValidateAnyUsageCorpusCompositeSlots(t *testing.T) {
 			category: string(anyCategoryArrayTypeElt),
 			line:     13,
 			column:   38,
+		},
+		{
+			file:     "pkg/predeclared/local.go",
+			owner:    "LocalPredeclaredComposites",
+			category: string(anyCategoryArrayTypeElt),
+			line:     4,
+			column:   14,
+		},
+		{
+			file:     "pkg/predeclared/local.go",
+			owner:    "LocalPredeclaredComposites",
+			category: string(anyCategoryMapTypeKey),
+			line:     5,
+			column:   16,
+		},
+		{
+			file:     "pkg/predeclared/local.go",
+			owner:    "LocalPredeclaredComposites",
+			category: string(anyCategoryMapTypeValue),
+			line:     6,
+			column:   24,
+		},
+		{
+			file:     "pkg/predeclared/local.go",
+			owner:    "LocalPredeclaredComposites",
+			category: string(anyCategoryChanTypeValue),
+			line:     7,
+			column:   18,
+		},
+		{
+			file:     "pkg/predeclared/local.go",
+			owner:    "LocalPredeclaredComposites",
+			category: string(anyCategoryStarExprX),
+			line:     8,
+			column:   11,
+		},
+		{
+			file:     "pkg/predeclared/local.go",
+			owner:    "LocalPredeclaredComposites",
+			category: string(anyCategoryEllipsisElt),
+			line:     10,
+			column:   21,
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
