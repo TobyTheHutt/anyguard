@@ -12,6 +12,7 @@ const (
 	corpusFixtureSupported          = "supported"
 	corpusFixtureBoundary           = "boundary"
 	corpusFixtureDeclarationSlots   = "declaration-slots"
+	corpusFixtureCompositeSlots     = "composite-slots"
 	corpusFixtureUnsupported        = "unsupported"
 	corpusFixtureAllowlistHygiene   = "allowlist-hygiene"
 	corpusFixtureStabilityBase      = "stability/base"
@@ -105,6 +106,78 @@ func TestValidateAnyUsageCorpusDeclarationSlots(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected declaration-slot corpus violations:\ngot: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestValidateAnyUsageCorpusCompositeSlots(t *testing.T) {
+	got := collectViolationSummaries(mustValidateCorpus(t, corpusFixtureCompositeSlots, testAllowlistEmpty, []string{DefaultRoots}))
+	want := []violationSummary{
+		{
+			file:     "pkg/predeclared/composites.go",
+			owner:    "ArrayAlias",
+			category: string(anyCategoryArrayTypeElt),
+			line:     3,
+			column:   21,
+		},
+		{
+			file:     "pkg/predeclared/composites.go",
+			owner:    "MapKeyAlias",
+			category: string(anyCategoryMapTypeKey),
+			line:     4,
+			column:   24,
+		},
+		{
+			file:     "pkg/predeclared/composites.go",
+			owner:    "MapValueAlias",
+			category: string(anyCategoryMapTypeValue),
+			line:     5,
+			column:   33,
+		},
+		{
+			file:     "pkg/predeclared/composites.go",
+			owner:    "ChanAlias",
+			category: string(anyCategoryChanTypeValue),
+			line:     6,
+			column:   23,
+		},
+		{
+			file:     "pkg/predeclared/composites.go",
+			owner:    "StarAlias",
+			category: string(anyCategoryStarExprX),
+			line:     7,
+			column:   19,
+		},
+		{
+			file:     "pkg/predeclared/composites.go",
+			owner:    "NestedArrayAlias",
+			category: string(anyCategoryArrayTypeElt),
+			line:     9,
+			column:   38,
+		},
+		{
+			file:     "pkg/predeclared/composites.go",
+			owner:    "NestedMapAlias",
+			category: string(anyCategoryMapTypeValue),
+			line:     10,
+			column:   36,
+		},
+		{
+			file:     "pkg/predeclared/composites.go",
+			owner:    "EllipsisAlias",
+			category: string(anyCategoryEllipsisElt),
+			line:     12,
+			column:   30,
+		},
+		{
+			file:     "pkg/predeclared/composites.go",
+			owner:    "NestedEllipsisAlias",
+			category: string(anyCategoryArrayTypeElt),
+			line:     13,
+			column:   38,
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected composite-slot corpus violations:\ngot: %#v\nwant: %#v", got, want)
 	}
 }
 

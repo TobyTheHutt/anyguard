@@ -864,13 +864,25 @@ func (collector *anyUsageCollector) visitPredeclaredAnySlot(category anyUsageCat
 	if expr == nil {
 		return
 	}
+	collector.recordPredeclaredAnyUsage(category, owner, expr)
+	collector.inspectNode(expr, owner)
+}
+
+func (collector *anyUsageCollector) visitCompositeTypeAnySlot(category anyUsageCategory, owner string, expr ast.Expr) {
+	if expr == nil {
+		return
+	}
+	collector.recordPredeclaredAnyUsage(category, owner, expr)
+	collector.inspectNode(expr, owner)
+}
+
+func (collector *anyUsageCollector) recordPredeclaredAnyUsage(category anyUsageCategory, owner string, expr ast.Expr) {
 	if ident, ok := predeclaredAnyIdent(expr, collector.info); ok {
 		collector.usages = append(collector.usages, anyUsage{
 			identity: newFindingIdentity(collector.file, owner, category),
 			pos:      ident.Pos(),
 		})
 	}
-	collector.inspectNode(expr, owner)
 }
 
 func newFindingIdentity(relPath, owner string, category anyUsageCategory) FindingIdentity {
@@ -946,16 +958,16 @@ func (collector *anyUsageCollector) inspectTypeNode(node ast.Node, owner string)
 		collector.inspectFieldList(typed.Methods, owner)
 	case *ast.ArrayType:
 		collector.inspectNode(typed.Len, owner)
-		collector.visitPredeclaredAnySlot(anyCategoryArrayTypeElt, owner, typed.Elt)
+		collector.visitCompositeTypeAnySlot(anyCategoryArrayTypeElt, owner, typed.Elt)
 	case *ast.MapType:
-		collector.visitPredeclaredAnySlot(anyCategoryMapTypeKey, owner, typed.Key)
-		collector.visitPredeclaredAnySlot(anyCategoryMapTypeValue, owner, typed.Value)
+		collector.visitCompositeTypeAnySlot(anyCategoryMapTypeKey, owner, typed.Key)
+		collector.visitCompositeTypeAnySlot(anyCategoryMapTypeValue, owner, typed.Value)
 	case *ast.ChanType:
-		collector.visitPredeclaredAnySlot(anyCategoryChanTypeValue, owner, typed.Value)
+		collector.visitCompositeTypeAnySlot(anyCategoryChanTypeValue, owner, typed.Value)
 	case *ast.StarExpr:
-		collector.visitPredeclaredAnySlot(anyCategoryStarExprX, owner, typed.X)
+		collector.visitCompositeTypeAnySlot(anyCategoryStarExprX, owner, typed.X)
 	case *ast.Ellipsis:
-		collector.visitPredeclaredAnySlot(anyCategoryEllipsisElt, owner, typed.Elt)
+		collector.visitCompositeTypeAnySlot(anyCategoryEllipsisElt, owner, typed.Elt)
 	default:
 		return false
 	}
