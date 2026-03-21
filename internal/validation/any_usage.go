@@ -36,6 +36,13 @@ var nolintDirectiveRE = regexp.MustCompile(`(?i)\bnolint(?::([a-z0-9_,-]+))?`)
 
 var universeAnyAlias = types.Universe.Lookup(anyName)
 
+func resolvesToPredeclaredAny(ident *ast.Ident, info *types.Info) bool {
+	if ident == nil || info == nil {
+		return false
+	}
+	return info.ObjectOf(ident) == universeAnyAlias
+}
+
 // Error represents a single disallowed `any` usage.
 type Error struct {
 	File     string // File mirrors Identity.File for existing callers.
@@ -850,21 +857,13 @@ func (collector *anyUsageCollector) visitSupportedSlot(category anyUsageCategory
 		return
 	}
 	ident, ok := expr.(*ast.Ident)
-	if ok && collector.isUniverseAnyAlias(ident) {
+	if ok && resolvesToPredeclaredAny(ident, collector.info) {
 		collector.usages = append(collector.usages, anyUsage{
 			identity: newFindingIdentity(collector.file, owner, category),
 			pos:      ident.Pos(),
 		})
 	}
 	collector.inspectNode(expr, owner)
-}
-
-func (collector *anyUsageCollector) isUniverseAnyAlias(ident *ast.Ident) bool {
-	if ident == nil || ident.Name != anyName || collector.info == nil {
-		return false
-	}
-	obj, ok := collector.info.Uses[ident]
-	return ok && obj == universeAnyAlias
 }
 
 func newFindingIdentity(relPath, owner string, category anyUsageCategory) FindingIdentity {
