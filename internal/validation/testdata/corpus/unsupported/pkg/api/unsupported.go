@@ -1,15 +1,29 @@
 package api
 
-type Box[T any] struct{}
+func Use[T any](value T) {
+	_ = value
+}
 
-func Constraint[T any](value T) {
-	any := 1
-	_ = any
+type Box[T any] struct {
+	Value T
+}
+
+func TypeSwitchCaseList(value interface{}) {
+	switch value.(type) {
+	case any, string:
+	}
+}
+
+func IdentifierNamedAny(any int) int {
+	holder := struct{ any int }{any: any}
 	_ = []int{any}
 	_ = map[int]int{any: any}
-	switch value.(type) {
-	case any:
-	}
+
+	slot := 0
+	slot = any
+
+	_ = holder.any
+	return any + slot
 }
 
 const text = "any in a string should stay quiet"
