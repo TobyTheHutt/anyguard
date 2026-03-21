@@ -26,11 +26,13 @@ func CallExprDisallowed() {
 	_ = any(1)
 }
 
-func IndexExprDisallowed(values map[int]int, any int) {
-	_ = values[any]
-}
+type Single[T any] struct{}
 
 type Box[T, U any] struct{}
+
+func IndexExprDisallowed() {
+	_ = Single[any]{}
+}
 
 func IndexListDisallowed() {
 	_ = Box[int, any]{}

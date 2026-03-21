@@ -55,9 +55,9 @@ For maintainers evaluating possible core inclusion:
 - Supported syntax categories are exactly the AST child slots enumerated in the detection contract. Anything outside that list is out of scope and intentionally silent.
 - Each finding has one exact identity: `{path, owner, category}`. Allowlist matching is exact on that identity only.
 - The analyzer fails closed on unresolved file identity, allowlist parse/validation errors, stale or ambiguous selectors, and traversal or parse failures.
-- CLI, analyzer, and module-plugin reporting order is a compatibility guarantee: syntax only, no type info, no scoring, no heuristic ranking, and stable sort order by `file`, `line`, `column`, `category`, and `owner`.
+- CLI, analyzer, and module-plugin reporting order is a compatibility guarantee: slot-based matching with semantic resolution of the universe `any` alias, no scoring, no heuristic ranking, and stable sort order by `file`, `line`, `column`, `category`, and `owner`.
 - Ordering does not depend on configured root order, filesystem traversal order, or map iteration.
-- The false-positive boundary is explicit in the detection contract. The syntax-only `CallExpr` and index-form matches are documented there and are suppressible with an exact allowlist selector or `//nolint:anyguard`.
+- The false-positive boundary is explicit in the detection contract. Ambiguous `CallExpr` and index-form slots are checked with type info, so shadowed identifiers like `func any(int)`, `values[any]` with a local variable, or `type any interface{}; Box[int, any]{}` stay silent.
 - Allowlist strictness is deliberate in schema version `2`: no broad file-level or owner-only exceptions, no duplicate selectors, and no selectors that fail to resolve to a current finding.
 - Non-goals: type-parameter constraints, broader unsafe-dynamic-use detection, or claims that every finding is a bug or security issue.
 - Adjacent linters such as `forbidigo`, `depguard`, `asasalint`, and `ireturn` cover different scopes: identifier bans, import policy, a variadic-call bug pattern, and interface-return style. `anyguard` governs only concrete `any` usage in the documented syntax slots.

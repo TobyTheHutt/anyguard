@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,9 +28,13 @@ const (
 	rootWildcardSuffix  = "/..."
 	rootAllPattern      = "..."
 	anyTokenMarker      = "<<ANY>>"
+	anyName             = "any"
+	sourceImporterMode  = "source"
 )
 
 var nolintDirectiveRE = regexp.MustCompile(`(?i)\bnolint(?::([a-z0-9_,-]+))?`)
+
+var universeAnyAlias = types.Universe.Lookup(anyName)
 
 // Error represents a single disallowed `any` usage.
 type Error struct {
@@ -156,38 +163,193 @@ func collectFindings(baseAbs string, roots, globs []string) ([]collectedFinding,
 }
 
 func collectRootFindings(rootPath, baseAbs string, globs []string) ([]collectedFinding, error) {
+	parsed, err := collectParsedPackages(rootPath, baseAbs, globs)
+	if err != nil {
+		return nil, err
+	}
+
 	findings := make([]collectedFinding, 0)
-	walkErr := filepath.WalkDir(rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
-		fileFindings, processErr := processRootFile(path, entry, walkErr, baseAbs, globs)
-		if processErr != nil {
-			return processErr
+	sourceImporter := importer.ForCompiler(parsed.fset, sourceImporterMode, nil)
+	for _, parsedPackage := range parsed.packages {
+		info := typeCheckParsedPackage(parsed.fset, sourceImporter, parsedPackage)
+		for _, file := range parsedPackage.files {
+			findings = append(findings, collectParsedFileFindings(parsed.fset, info, file)...)
 		}
-		findings = append(findings, fileFindings...)
-		return nil
-	})
-	if walkErr != nil {
-		return nil, walkErr
 	}
 	return findings, nil
 }
 
-func processRootFile(path string, entry fs.DirEntry, walkErr error, baseAbs string, globs []string) ([]collectedFinding, error) {
+type parsedGoFile struct {
+	relPath string
+	content []byte
+	syntax  *ast.File
+}
+
+type parsedPackageCollection struct {
+	fset     *token.FileSet
+	packages []parsedPackage
+}
+
+type parsedPackageKey struct {
+	dir  string
+	name string
+}
+
+type parsedPackage struct {
+	dir   string
+	name  string
+	files []parsedGoFile
+}
+
+func collectParsedPackages(rootPath, baseAbs string, globs []string) (parsedPackageCollection, error) {
+	fset := token.NewFileSet()
+	grouped := make(map[parsedPackageKey]*parsedPackage)
+
+	err := walkParsedFiles(rootPath, baseAbs, globs, fset, func(file parsedGoFile) error {
+		appendParsedPackageFile(grouped, file)
+		return nil
+	})
+	if err != nil {
+		return parsedPackageCollection{}, err
+	}
+
+	return finalizeParsedPackages(fset, grouped), nil
+}
+
+func walkParsedFiles(
+	rootPath, baseAbs string,
+	globs []string,
+	fset *token.FileSet,
+	visit func(parsedGoFile) error,
+) error {
+	return filepath.WalkDir(rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
+		parsedFile, keep, err := parseRootFile(fset, path, entry, walkErr, baseAbs, globs)
+		if err != nil {
+			return err
+		}
+		if !keep {
+			return nil
+		}
+		return visit(parsedFile)
+	})
+}
+
+func appendParsedPackageFile(grouped map[parsedPackageKey]*parsedPackage, file parsedGoFile) {
+	key := newParsedPackageKey(file)
+	group, ok := grouped[key]
+	if !ok {
+		group = &parsedPackage{
+			dir:   key.dir,
+			name:  key.name,
+			files: make([]parsedGoFile, 0),
+		}
+		grouped[key] = group
+	}
+	group.files = append(group.files, file)
+}
+
+func finalizeParsedPackages(
+	fset *token.FileSet,
+	grouped map[parsedPackageKey]*parsedPackage,
+) parsedPackageCollection {
+	packages := make([]parsedPackage, 0, len(grouped))
+	for _, group := range grouped {
+		sort.Slice(group.files, func(i, j int) bool {
+			return group.files[i].relPath < group.files[j].relPath
+		})
+		packages = append(packages, *group)
+	}
+	sort.Slice(packages, func(i, j int) bool {
+		left := packages[i]
+		right := packages[j]
+		switch {
+		case left.dir != right.dir:
+			return left.dir < right.dir
+		default:
+			return left.name < right.name
+		}
+	})
+	return parsedPackageCollection{
+		fset:     fset,
+		packages: packages,
+	}
+}
+
+func parseRootFile(
+	fset *token.FileSet,
+	path string,
+	entry fs.DirEntry,
+	walkErr error,
+	baseAbs string,
+	globs []string,
+) (parsedGoFile, bool, error) {
 	if walkErr != nil {
-		return nil, walkErr
+		return parsedGoFile{}, false, walkErr
 	}
 	if entry.IsDir() || !strings.HasSuffix(path, ".go") {
-		return nil, nil
+		return parsedGoFile{}, false, nil
 	}
 
 	relPath, relErr := filepath.Rel(baseAbs, path)
 	if relErr != nil {
-		return nil, relErr
+		return parsedGoFile{}, false, relErr
 	}
 	relPath = normalizePath(relPath)
 	if shouldExclude(relPath, globs) {
-		return nil, nil
+		return parsedGoFile{}, false, nil
 	}
-	return collectFileFindings(path, relPath)
+
+	// #nosec G304 -- path is discovered from validated roots.
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return parsedGoFile{}, false, err
+	}
+
+	syntax, err := parser.ParseFile(fset, path, content, parser.ParseComments)
+	if err != nil {
+		return parsedGoFile{}, false, err
+	}
+
+	return parsedGoFile{
+		relPath: relPath,
+		content: content,
+		syntax:  syntax,
+	}, true, nil
+}
+
+func newParsedPackageKey(file parsedGoFile) parsedPackageKey {
+	return parsedPackageKey{
+		dir:  filepath.Dir(file.relPath),
+		name: file.syntax.Name.Name,
+	}
+}
+
+func typeCheckParsedPackage(fset *token.FileSet, sourceImporter types.Importer, pkg parsedPackage) *types.Info {
+	files := make([]*ast.File, 0, len(pkg.files))
+	for _, file := range pkg.files {
+		files = append(files, file.syntax)
+	}
+
+	info := &types.Info{
+		Uses: make(map[*ast.Ident]types.Object),
+	}
+
+	packagePath := pkg.dir
+	if packagePath == "" || packagePath == "." {
+		packagePath = pkg.name
+	}
+
+	config := types.Config{
+		DisableUnusedImportCheck: true,
+		Error:                    func(error) {},
+		Importer:                 sourceImporter,
+	}
+	// Keep partial type info on invalid packages so shadowed or unresolved names stay silent.
+	if _, err := config.Check(packagePath, fset, files, info); err != nil {
+		slog.Debug("anyguard partial type-check failed", "package_path", packagePath, "error", err)
+		return info
+	}
+	return info
 }
 
 func resolveRootPath(baseAbs, root string) (string, bool, error) {
@@ -349,26 +511,14 @@ type collectedFinding struct {
 	suppressedByNolint bool
 }
 
-func collectFileFindings(path, relPath string) ([]collectedFinding, error) {
-	// #nosec G304 -- path is discovered from validated roots.
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, path, content, parser.ParseComments)
-	if err != nil {
-		return nil, err
-	}
-
-	nolintLines := collectNolintLines(file, fset)
-	uses := collectAnyUsages(relPath, file)
+func collectParsedFileFindings(fset *token.FileSet, info *types.Info, file parsedGoFile) []collectedFinding {
+	nolintLines := collectNolintLines(file.syntax, fset)
+	uses := collectAnyUsages(file.relPath, file.syntax, info)
 	if len(uses) == 0 {
-		return nil, nil
+		return nil
 	}
 
-	lines := strings.Split(string(content), "\n")
+	lines := strings.Split(string(file.content), "\n")
 	findings := make([]collectedFinding, 0, len(uses))
 	for _, usage := range uses {
 		pos := fset.Position(usage.pos)
@@ -381,14 +531,15 @@ func collectFileFindings(path, relPath string) ([]collectedFinding, error) {
 		})
 	}
 
-	return findings, nil
+	return findings
 }
 
 func lineCode(line int, lines []string) string {
-	if line <= 0 || line > len(lines) {
+	index := line - 1
+	if index < 0 || index >= len(lines) {
 		return ""
 	}
-	return strings.TrimSpace(lines[line-1])
+	return strings.TrimSpace(lines[index])
 }
 
 func newViolation(finding collectedFinding) Error {
@@ -582,12 +733,14 @@ type anyUsage struct {
 // anyUsageCollector records findings only from explicitly supported AST slots.
 type anyUsageCollector struct {
 	file   string
+	info   *types.Info
 	usages []anyUsage
 }
 
-func collectAnyUsages(relPath string, file *ast.File) []anyUsage {
+func collectAnyUsages(relPath string, file *ast.File, info *types.Info) []anyUsage {
 	collector := anyUsageCollector{
 		file:   normalizePath(relPath),
+		info:   info,
 		usages: make([]anyUsage, 0),
 	}
 	collector.inspectFile(file)
@@ -697,13 +850,21 @@ func (collector *anyUsageCollector) visitSupportedSlot(category anyUsageCategory
 		return
 	}
 	ident, ok := expr.(*ast.Ident)
-	if ok && ident.Name == "any" {
+	if ok && collector.isUniverseAnyAlias(ident) {
 		collector.usages = append(collector.usages, anyUsage{
 			identity: newFindingIdentity(collector.file, owner, category),
 			pos:      ident.Pos(),
 		})
 	}
 	collector.inspectNode(expr, owner)
+}
+
+func (collector *anyUsageCollector) isUniverseAnyAlias(ident *ast.Ident) bool {
+	if ident == nil || ident.Name != anyName || collector.info == nil {
+		return false
+	}
+	obj, ok := collector.info.Uses[ident]
+	return ok && obj == universeAnyAlias
 }
 
 func newFindingIdentity(relPath, owner string, category anyUsageCategory) FindingIdentity {

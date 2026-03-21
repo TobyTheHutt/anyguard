@@ -30,7 +30,7 @@ Packages:
 ### Behavior
 
 - Scans `.go` files under configured roots.
-- Parses AST and reports true type-position usage of `any`.
+- Parses AST, resolves identifiers semantically, and reports supported-slot usage of the universe `any` alias.
 - Compares findings against an allowlist.
 - Supports strict selector-based exceptions, exclude globs, and specific `//nolint` instructions.
 - Exception metadata is minimal. `description` is required.
@@ -68,7 +68,7 @@ Each entry must provide an exact `selector` with the canonical `{path, owner, ca
 
 ### Detection Contract
 
-`anyguard` is syntax driven. It only reports `any` when the identifier is the direct child of one of the AST slots below. Anything not listed is unsupported and is not detected or reported (you are welcome to contribute).
+`anyguard` is slot driven. It only reports `any` when the identifier is the direct child of one of the AST slots below and resolves semantically to the Go universe `any` alias. Anything not listed is unsupported and is not detected or reported (you are welcome to contribute).
 
 | Parent AST node | Child slot | Supported syntax |
 | --- | --- | --- |
@@ -81,9 +81,9 @@ Each entry must provide an exact `selector` with the canonical `{path, owner, ca
 | `*ast.ChanType` | `Value` | Channel element types |
 | `*ast.StarExpr` | `X` | Pointer target types |
 | `*ast.Ellipsis` | `Elt` | Variadic parameter element types |
-| `*ast.CallExpr` | `Fun` | `any(...)` forms matched by syntax only |
-| `*ast.IndexExpr` | `Index` | `T[any]` and `value[any]` forms matched by syntax only |
-| `*ast.IndexListExpr` | `Indices[i]` | `T[int, any]` style forms matched by syntax only |
+| `*ast.CallExpr` | `Fun` | Conversions such as `any(value)` when the callee resolves to the universe alias |
+| `*ast.IndexExpr` | `Index` | Single-argument instantiations such as `Box[any]` when the index resolves to the universe alias |
+| `*ast.IndexListExpr` | `Indices[i]` | Multi-argument instantiations such as `Box[int, any]` when the type argument resolves to the universe alias |
 
 Nested `any` is reportable only when the nested identifier still appears in one of those slots. For example, `map[string][]any` reports because the innermost `any` is the `Elt` of an `*ast.ArrayType`.
 
@@ -93,11 +93,9 @@ Nested `any` is reportable only when the nested identifier still appears in one 
 - In those examples, `any` constrains `T`. It is not a concrete type position like `func Use(v any) {}` or `type Value = any`
 - Any `any` occurrence whose direct parent child AST relationship is not listed above
 - Identifier names, selectors, assignments, composite literal elements, return expressions, type switch case lists, comments, and string literals
-- No type info is used. `any(...)`, `T[any]`, and `T[int, any]` are matched by syntax alone because those exact AST child slots are part of the compatibility contract
-- Example false positive, a user function named `any` that is called as `any(1)` reports because the callee matches `*ast.CallExpr.Fun`
-- Example false positive, a value named `any` used in `values[any]` reports because the index matches `*ast.IndexExpr.Index`
-- Example false positive, `Box[int, any]` style syntax reports because the second slot matches `*ast.IndexListExpr.Indices[i]`
-- These syntax-only matches can be suppressed with an exact allowlist selector or with `//nolint:anyguard` on the same line or the previous line
+- Each report requires semantic resolution to the universe `any` alias. Shadowed declarations such as `func any(v int)`, `values[any]` with a local index variable, or `type any interface{}; Box[int, any]{}` stay silent.
+- On invalid or incomplete code, `anyguard` does not guess from bare syntax. It only reports when the identifier can still be resolved as the universe alias.
+- Exact allowlist selectors and `//nolint:anyguard` remain the escape hatches when a resolved universe-`any` usage is intentionally allowed
 
 #### Finding identity
 
