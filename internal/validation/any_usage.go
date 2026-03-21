@@ -43,6 +43,14 @@ func resolvesToPredeclaredAny(ident *ast.Ident, info *types.Info) bool {
 	return info.ObjectOf(ident) == universeAnyAlias
 }
 
+func predeclaredAnyIdent(expr ast.Expr, info *types.Info) (*ast.Ident, bool) {
+	ident, ok := expr.(*ast.Ident)
+	if !ok || !resolvesToPredeclaredAny(ident, info) {
+		return nil, false
+	}
+	return ident, true
+}
+
 // Error represents a single disallowed `any` usage.
 type Error struct {
 	File     string // File mirrors Identity.File for existing callers.
@@ -790,10 +798,10 @@ func (collector *anyUsageCollector) inspectLocalDecl(decl ast.Decl, owner string
 func (collector *anyUsageCollector) inspectTopLevelSpec(spec ast.Spec) {
 	switch node := spec.(type) {
 	case *ast.TypeSpec:
-		collector.visitSupportedSlot(anyCategoryTypeSpecType, node.Name.Name, node.Type)
+		collector.visitPredeclaredAnySlot(anyCategoryTypeSpecType, node.Name.Name, node.Type)
 	case *ast.ValueSpec:
 		owner := valueSpecOwner(node)
-		collector.visitSupportedSlot(anyCategoryValueSpecType, owner, node.Type)
+		collector.visitPredeclaredAnySlot(anyCategoryValueSpecType, owner, node.Type)
 		collector.inspectExprs(node.Values, owner)
 	}
 }
@@ -801,9 +809,9 @@ func (collector *anyUsageCollector) inspectTopLevelSpec(spec ast.Spec) {
 func (collector *anyUsageCollector) inspectLocalSpec(spec ast.Spec, owner string) {
 	switch node := spec.(type) {
 	case *ast.TypeSpec:
-		collector.visitSupportedSlot(anyCategoryTypeSpecType, owner, node.Type)
+		collector.visitPredeclaredAnySlot(anyCategoryTypeSpecType, owner, node.Type)
 	case *ast.ValueSpec:
-		collector.visitSupportedSlot(anyCategoryValueSpecType, owner, node.Type)
+		collector.visitPredeclaredAnySlot(anyCategoryValueSpecType, owner, node.Type)
 		collector.inspectExprs(node.Values, owner)
 	}
 }
@@ -836,7 +844,7 @@ func (collector *anyUsageCollector) inspectFieldList(fields *ast.FieldList, owne
 		if field == nil {
 			continue
 		}
-		collector.visitSupportedSlot(anyCategoryFieldType, owner, field.Type)
+		collector.visitPredeclaredAnySlot(anyCategoryFieldType, owner, field.Type)
 	}
 }
 
@@ -852,12 +860,11 @@ func (collector *anyUsageCollector) inspectStmts(stmts []ast.Stmt, owner string)
 	}
 }
 
-func (collector *anyUsageCollector) visitSupportedSlot(category anyUsageCategory, owner string, expr ast.Expr) {
+func (collector *anyUsageCollector) visitPredeclaredAnySlot(category anyUsageCategory, owner string, expr ast.Expr) {
 	if expr == nil {
 		return
 	}
-	ident, ok := expr.(*ast.Ident)
-	if ok && resolvesToPredeclaredAny(ident, collector.info) {
+	if ident, ok := predeclaredAnyIdent(expr, collector.info); ok {
 		collector.usages = append(collector.usages, anyUsage{
 			identity: newFindingIdentity(collector.file, owner, category),
 			pos:      ident.Pos(),
@@ -939,16 +946,16 @@ func (collector *anyUsageCollector) inspectTypeNode(node ast.Node, owner string)
 		collector.inspectFieldList(typed.Methods, owner)
 	case *ast.ArrayType:
 		collector.inspectNode(typed.Len, owner)
-		collector.visitSupportedSlot(anyCategoryArrayTypeElt, owner, typed.Elt)
+		collector.visitPredeclaredAnySlot(anyCategoryArrayTypeElt, owner, typed.Elt)
 	case *ast.MapType:
-		collector.visitSupportedSlot(anyCategoryMapTypeKey, owner, typed.Key)
-		collector.visitSupportedSlot(anyCategoryMapTypeValue, owner, typed.Value)
+		collector.visitPredeclaredAnySlot(anyCategoryMapTypeKey, owner, typed.Key)
+		collector.visitPredeclaredAnySlot(anyCategoryMapTypeValue, owner, typed.Value)
 	case *ast.ChanType:
-		collector.visitSupportedSlot(anyCategoryChanTypeValue, owner, typed.Value)
+		collector.visitPredeclaredAnySlot(anyCategoryChanTypeValue, owner, typed.Value)
 	case *ast.StarExpr:
-		collector.visitSupportedSlot(anyCategoryStarExprX, owner, typed.X)
+		collector.visitPredeclaredAnySlot(anyCategoryStarExprX, owner, typed.X)
 	case *ast.Ellipsis:
-		collector.visitSupportedSlot(anyCategoryEllipsisElt, owner, typed.Elt)
+		collector.visitPredeclaredAnySlot(anyCategoryEllipsisElt, owner, typed.Elt)
 	default:
 		return false
 	}
@@ -958,18 +965,18 @@ func (collector *anyUsageCollector) inspectTypeNode(node ast.Node, owner string)
 func (collector *anyUsageCollector) inspectExprNode(node ast.Node, owner string) bool {
 	switch typed := node.(type) {
 	case *ast.CallExpr:
-		collector.visitSupportedSlot(anyCategoryCallExprFun, owner, typed.Fun)
+		collector.visitPredeclaredAnySlot(anyCategoryCallExprFun, owner, typed.Fun)
 		collector.inspectExprs(typed.Args, owner)
 	case *ast.TypeAssertExpr:
 		collector.inspectNode(typed.X, owner)
-		collector.visitSupportedSlot(anyCategoryTypeAssertType, owner, typed.Type)
+		collector.visitPredeclaredAnySlot(anyCategoryTypeAssertType, owner, typed.Type)
 	case *ast.IndexExpr:
 		collector.inspectNode(typed.X, owner)
-		collector.visitSupportedSlot(anyCategoryIndexExprIndex, owner, typed.Index)
+		collector.visitPredeclaredAnySlot(anyCategoryIndexExprIndex, owner, typed.Index)
 	case *ast.IndexListExpr:
 		collector.inspectNode(typed.X, owner)
 		for _, index := range typed.Indices {
-			collector.visitSupportedSlot(anyCategoryIndexListIndex, owner, index)
+			collector.visitPredeclaredAnySlot(anyCategoryIndexListIndex, owner, index)
 		}
 	case *ast.CompositeLit:
 		collector.inspectNode(typed.Type, owner)

@@ -11,6 +11,7 @@ import (
 const (
 	corpusFixtureSupported          = "supported"
 	corpusFixtureBoundary           = "boundary"
+	corpusFixtureDeclarationSlots   = "declaration-slots"
 	corpusFixtureUnsupported        = "unsupported"
 	corpusFixtureAllowlistHygiene   = "allowlist-hygiene"
 	corpusFixtureStabilityBase      = "stability/base"
@@ -67,6 +68,43 @@ func TestValidateAnyUsageCorpusUnsupportedContexts(t *testing.T) {
 	got := collectViolationSummaries(mustValidateCorpus(t, corpusFixtureUnsupported, testAllowlistEmpty, []string{DefaultRoots}))
 	if len(got) != 0 {
 		t.Fatalf("expected unsupported corpus to remain unreported, got %#v", got)
+	}
+}
+
+func TestValidateAnyUsageCorpusDeclarationSlots(t *testing.T) {
+	got := collectViolationSummaries(mustValidateCorpus(t, corpusFixtureDeclarationSlots, testAllowlistEmpty, []string{DefaultRoots}))
+	want := []violationSummary{
+		{
+			file:     "pkg/predeclared/declarations.go",
+			owner:    "FieldTypePredeclared",
+			category: string(anyCategoryFieldType),
+			line:     3,
+			column:   33,
+		},
+		{
+			file:     "pkg/predeclared/declarations.go",
+			owner:    "ValueSpecPredeclared",
+			category: string(anyCategoryValueSpecType),
+			line:     5,
+			column:   26,
+		},
+		{
+			file:     "pkg/predeclared/declarations.go",
+			owner:    "TypeSpecPredeclared",
+			category: string(anyCategoryTypeSpecType),
+			line:     7,
+			column:   28,
+		},
+		{
+			file:     "pkg/predeclared/declarations.go",
+			owner:    "TypeAssertPredeclared",
+			category: string(anyCategoryTypeAssertType),
+			line:     10,
+			column:   13,
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected declaration-slot corpus violations:\ngot: %#v\nwant: %#v", got, want)
 	}
 }
 
