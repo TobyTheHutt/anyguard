@@ -23,11 +23,15 @@ const (
 	testPkgFiltered    = "filtered"
 	testPkgDir         = "pkg"
 	testNilPkgPath     = "pkg/nilpkg.go"
+	testShadowedPath   = "pkg/shadowed.go"
 	testAnalyzerSrc    = "package pkg\ntype T map[string]any\n"
 	testCreateSource   = "create source dir: %v"
 	testWriteSource    = "write source file: %v"
 	testParseSource    = "parse source: %v"
 	testUnexpectedErr  = "unexpected error: %v"
+	testCollectFiles   = "collect files: %v"
+	testExpectedOne    = "expected one file, got %d"
+	testShadowedQuiet  = "expected shadowed any to stay quiet, got %#v"
 )
 
 func TestAnalyzer(t *testing.T) {
@@ -54,6 +58,13 @@ func TestAnalyzerRespectsRoots(t *testing.T) {
 	analysistest.Run(t, testdata, analyzer, testPkgFiltered)
 }
 
+func TestNewAnalyzerRunsDespiteErrors(t *testing.T) {
+	analyzer := NewAnalyzer()
+	if !analyzer.RunDespiteErrors {
+		t.Fatalf("expected analyzer to run despite type errors")
+	}
+}
+
 func TestCollectAnalyzerFilesWithNilPackage(t *testing.T) {
 	base := t.TempDir()
 	sourcePath := filepath.Join(base, testNilPkgPath)
@@ -77,13 +88,199 @@ func TestCollectAnalyzerFilesWithNilPackage(t *testing.T) {
 
 	files, err := collectAnalyzerFiles(pass, base, []string{DefaultRoots})
 	if err != nil {
-		t.Fatalf("collect files: %v", err)
+		t.Fatalf(testCollectFiles, err)
 	}
 	if len(files) != 1 {
-		t.Fatalf("expected one file, got %d", len(files))
+		t.Fatalf(testExpectedOne, len(files))
 	}
 	if got, want := files[0].relPath, testNilPkgPath; got != want {
 		t.Fatalf("unexpected relative path: got %q want %q", got, want)
+	}
+}
+
+func TestCollectAnalyzerFilesUsesPassReadFile(t *testing.T) {
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, testNilPkgPath)
+
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, sourcePath, testAnalyzerSrc, parser.ParseComments)
+	if err != nil {
+		t.Fatalf(testParseSource, err)
+	}
+
+	pass := &analysis.Pass{
+		Fset:  fset,
+		Files: []*ast.File{parsed},
+		ReadFile: func(filename string) ([]byte, error) {
+			if filename != sourcePath {
+				t.Fatalf("unexpected read path: %q", filename)
+			}
+			return []byte(testAnalyzerSrc), nil
+		},
+	}
+
+	files, err := collectAnalyzerFiles(pass, base, []string{DefaultRoots})
+	if err != nil {
+		t.Fatalf(testCollectFiles, err)
+	}
+	if len(files) != 1 {
+		t.Fatalf(testExpectedOne, len(files))
+	}
+	if got := string(files[0].content); got != testAnalyzerSrc {
+		t.Fatalf("unexpected file content: %q", got)
+	}
+	if files[0].syntax != parsed {
+		t.Fatalf("expected parsed syntax to be reused")
+	}
+}
+
+func TestCollectAnalyzerFindingsUsesPassTypesInfo(t *testing.T) {
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, testShadowedPath)
+	source := "package pkg\ntype any interface{}\ntype Payload map[string]any\nfunc Use() { _ = any(1) }\n"
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o750); err != nil {
+		t.Fatalf(testCreateSource, err)
+	}
+	if err := os.WriteFile(sourcePath, []byte(source), 0o600); err != nil {
+		t.Fatalf(testWriteSource, err)
+	}
+
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, sourcePath, nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf(testParseSource, err)
+	}
+
+	pass := &analysis.Pass{
+		Fset:      fset,
+		Files:     []*ast.File{parsed},
+		TypesInfo: typeCheckTestFile(fset, parsed),
+	}
+
+	files, err := collectAnalyzerFiles(pass, base, []string{DefaultRoots})
+	if err != nil {
+		t.Fatalf(testCollectFiles, err)
+	}
+
+	findings, err := collectAnalyzerFindings(pass, files)
+	if err != nil {
+		t.Fatalf("collect findings: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf(testShadowedQuiet, collectFindingSummaries(findings))
+	}
+}
+
+func TestCollectAnalyzerFindingsRequiresTypesInfo(t *testing.T) {
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, testNilPkgPath)
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o750); err != nil {
+		t.Fatalf(testCreateSource, err)
+	}
+	if err := os.WriteFile(sourcePath, []byte(testAnalyzerSrc), 0o600); err != nil {
+		t.Fatalf(testWriteSource, err)
+	}
+
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, sourcePath, nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf(testParseSource, err)
+	}
+
+	pass := &analysis.Pass{
+		Fset:  fset,
+		Files: []*ast.File{parsed},
+	}
+
+	files, err := collectAnalyzerFiles(pass, base, []string{DefaultRoots})
+	if err != nil {
+		t.Fatalf(testCollectFiles, err)
+	}
+
+	_, err = collectAnalyzerFindings(pass, files)
+	if err == nil {
+		t.Fatalf("expected types info error")
+	}
+	if !strings.Contains(err.Error(), errMissingTypesInfo) {
+		t.Fatalf(testUnexpectedErr, err)
+	}
+}
+
+func TestCollectAnalyzerFindingsWithNoFiles(t *testing.T) {
+	findings, err := collectAnalyzerFindings(&analysis.Pass{}, nil)
+	if err != nil {
+		t.Fatalf("collect findings without files: %v", err)
+	}
+	if findings != nil {
+		t.Fatalf("expected nil findings, got %#v", findings)
+	}
+}
+
+func TestResolveAllowlistPath(t *testing.T) {
+	base := t.TempDir()
+	relative, err := resolveAllowlistPath(base, DefaultAllowlistPath)
+	if err != nil {
+		t.Fatalf("resolve relative allowlist path: %v", err)
+	}
+	if got, want := relative, filepath.Join(base, filepath.FromSlash(DefaultAllowlistPath)); got != want {
+		t.Fatalf("unexpected relative allowlist path: got %q want %q", got, want)
+	}
+
+	absolute := filepath.Join(base, "absolute.yaml")
+	resolved, err := resolveAllowlistPath(base, absolute)
+	if err != nil {
+		t.Fatalf("resolve absolute allowlist path: %v", err)
+	}
+	if resolved != absolute {
+		t.Fatalf("unexpected absolute allowlist path: %q", resolved)
+	}
+}
+
+func TestFindGoModRootAndFileExists(t *testing.T) {
+	base := t.TempDir()
+	moduleRoot := filepath.Join(base, "repo")
+	nested := filepath.Join(moduleRoot, testPkgDir, testDirAPI)
+	if err := os.MkdirAll(nested, 0o750); err != nil {
+		t.Fatalf("create nested module path: %v", err)
+	}
+
+	goMod := filepath.Join(moduleRoot, goModFilename)
+	if err := os.WriteFile(goMod, []byte("module example.com/test\n"), 0o600); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	root, ok := findGoModRoot(nested)
+	if !ok {
+		t.Fatalf("expected go.mod root")
+	}
+	if root != moduleRoot {
+		t.Fatalf("unexpected go.mod root: %q", root)
+	}
+	if !fileExists(goMod) {
+		t.Fatalf("expected go.mod to exist")
+	}
+	if fileExists(filepath.Join(moduleRoot, "missing.go")) {
+		t.Fatalf("expected missing file to stay false")
+	}
+}
+
+func TestFirstPassFilename(t *testing.T) {
+	if got := firstPassFilename(&analysis.Pass{}); got != "" {
+		t.Fatalf("expected empty filename without files, got %q", got)
+	}
+
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, testSamplePath, testPackageAPISource, parser.ParseComments)
+	if err != nil {
+		t.Fatalf(testParseSource, err)
+	}
+	pass := &analysis.Pass{
+		Fset:  fset,
+		Files: []*ast.File{parsed},
+	}
+
+	if got, want := firstPassFilename(pass), testSamplePath; got != want {
+		t.Fatalf("unexpected first filename: got %q want %q", got, want)
 	}
 }
 

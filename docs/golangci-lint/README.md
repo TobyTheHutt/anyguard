@@ -7,7 +7,8 @@
 - Linter name in `.golangci.yml`: `anyguard`
 - Module-plugin diagnostics follow the same deterministic ordering compatibility guarantee as the CLI and public analyzer.
 - The plugin uses the same AST-slot-driven contract as the CLI and public analyzer.
-- It reports `any` only in explicitly supported AST child slots and resolves the universe `any` alias to suppress shadowed declarations.
+- It requires golangci-lint `typesinfo` load mode so supported-slot matching can use `analysis.Pass.TypesInfo`.
+- It reports `any` only in explicitly supported AST child slots and resolves the universe `any` alias via `types.Info` to suppress shadowed declarations.
 - It is not a full type-position semantic classifier, so supported-slot cases such as `any(1)`, `Single[any]{}`, and `Box[int, any]{}` remain reportable by contract.
 
 ## Build a custom golangci-lint
@@ -49,6 +50,17 @@ linters:
 - `allowlist` (string): path to the YAML allowlist file. Default is `internal/ci/any_allowlist.yaml`.
 - `roots` (string or list): roots to analyze. Default is `./...`.
 - `repo-root` (string): optional repository root override for path resolution.
+
+## Load mode and performance
+
+- The module plugin requires `typesinfo` load mode.
+- This increases golangci-lint package loading cost compared with a syntax-only plugin because packages are type checked before `anyguard` runs.
+- Finding identity, allowlist matching, and diagnostic ordering do not change.
+- Measure the repository smoke path with:
+
+```bash
+/usr/bin/time -f 'elapsed=%E maxrss=%MKB' bash scripts/ci/run-golangci-plugin-smoke.sh
+```
 
 ## Upstream readiness
 

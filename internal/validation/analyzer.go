@@ -3,6 +3,7 @@ package validation
 import (
 	"errors"
 	"fmt"
+	"go/ast"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -24,7 +25,10 @@ const (
 	flagRoots     = "roots"
 	flagRepoRoot  = "repo-root"
 
-	errNoRootsProvided = "no roots provided for any usage validation"
+	goModFilename = "go.mod"
+
+	errNoRootsProvided  = "no roots provided for any usage validation"
+	errMissingTypesInfo = "analysis pass missing types info"
 )
 
 // NewAnalyzer constructs a go/analysis analyzer for any-usage validation.
@@ -34,10 +38,11 @@ func NewAnalyzer() *analysis.Analyzer {
 		roots:         DefaultRoots,
 	}
 	analyzer := &analysis.Analyzer{
-		Name:       AnalyzerName,
-		Doc:        "reports disallowed usage of the Go any type",
-		Run:        cfg.run,
-		ResultType: reflect.TypeOf(analysisResult{}),
+		Name:             AnalyzerName,
+		Doc:              "reports disallowed usage of the Go any type",
+		Run:              cfg.run,
+		RunDespiteErrors: true,
+		ResultType:       reflect.TypeOf(analysisResult{}),
 	}
 	analyzer.Flags.StringVar(&cfg.allowlistPath, flagAllowlist, DefaultAllowlistPath, "path to any usage allowlist YAML")
 	analyzer.Flags.StringVar(&cfg.roots, flagRoots, DefaultRoots, "comma-separated roots to scan")
@@ -52,7 +57,9 @@ type analyzerConfig struct {
 }
 
 type analyzerFile struct {
+	content   []byte
 	relPath   string
+	syntax    *ast.File
 	tokenFile *token.File
 }
 
@@ -82,6 +89,19 @@ func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	files, err := collectAnalyzerFiles(pass, repoRoot, roots)
+	if err != nil {
+		return nil, err
+	}
+	packageFindings, err := collectAnalyzerFindings(pass, files)
+	if err != nil {
+		return nil, err
+	}
+
+	// collectAnalyzerFindings builds packageFindings for current-package diagnostics,
+	// then collectFindings scans the full repo so resolveAllowlistIndex can validate
+	// stale selectors against findings before collectAnalyzerViolations reports them.
 	findings, err := collectFindings(repoRoot, roots, allowlist.ExcludeGlobs)
 	if err != nil {
 		return nil, err
@@ -91,11 +111,7 @@ func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 		return nil, err
 	}
 
-	files, err := collectAnalyzerFiles(pass, repoRoot, roots)
-	if err != nil {
-		return nil, err
-	}
-	reportViolations(pass, collectAnalyzerViolations(files, findings, index))
+	reportViolations(pass, collectAnalyzerViolations(files, packageFindings, index))
 	return analysisResult{}, nil
 }
 
@@ -135,7 +151,7 @@ func firstPassFilename(pass *analysis.Pass) string {
 func findGoModRoot(start string) (string, bool) {
 	dir := filepath.Clean(start)
 	for {
-		if fileExists(filepath.Join(dir, "go.mod")) {
+		if fileExists(filepath.Join(dir, goModFilename)) {
 			return dir, true
 		}
 		parent := filepath.Dir(dir)
@@ -188,12 +204,47 @@ func collectAnalyzerFiles(pass *analysis.Pass, repoRoot string, roots []string) 
 		if tokenFile == nil {
 			continue
 		}
+
+		content, err := readAnalyzerFile(pass, pos.Filename)
+		if err != nil {
+			return nil, fmt.Errorf("read analyzer file %s: %w", pos.Filename, err)
+		}
 		files = append(files, analyzerFile{
+			content:   content,
 			relPath:   relPath,
+			syntax:    file,
 			tokenFile: tokenFile,
 		})
 	}
 	return files, nil
+}
+
+func readAnalyzerFile(pass *analysis.Pass, filename string) ([]byte, error) {
+	if pass.ReadFile != nil {
+		return pass.ReadFile(filename)
+	}
+	// #nosec G304 -- filename comes from analysis pass file metadata.
+	return os.ReadFile(filename)
+}
+
+func collectAnalyzerFindings(pass *analysis.Pass, files []analyzerFile) ([]collectedFinding, error) {
+	if len(files) == 0 {
+		return nil, nil
+	}
+	if pass.TypesInfo == nil {
+		return nil, errors.New(errMissingTypesInfo)
+	}
+
+	findings := make([]collectedFinding, 0)
+	for _, file := range files {
+		findings = append(findings, collectParsedFileFindings(pass.Fset, pass.TypesInfo, parsedGoFile{
+			relPath: file.relPath,
+			content: file.content,
+			syntax:  file.syntax,
+		})...)
+	}
+	sortCollectedFindings(findings)
+	return findings, nil
 }
 
 func relativePath(repoRoot, absPath string) (string, error) {

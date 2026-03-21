@@ -11,4 +11,7 @@ func TestNewAnalyzer(t *testing.T) {
 	if got, want := analyzer.Name, AnalyzerName; got != want {
 		t.Fatalf("analyzer name = %q, want %q", got, want)
 	}
+	if !analyzer.RunDespiteErrors {
+		t.Fatal("expected analyzer to run despite errors")
+	}
 }
