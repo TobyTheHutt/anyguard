@@ -166,6 +166,7 @@ golangci-lint run
 - Stable plugin import path: `github.com/tobythehutt/anyguard/plugin`
 - Plugin name in `.golangci.yml`: `anyguard`
 - Plugin diagnostics follow the same deterministic ordering contract as the CLI and public analyzer.
+- The module plugin requests golangci-lint `typesinfo` load mode so supported-slot matching can use `analysis.Pass.TypesInfo`.
 - Integration docs and examples: `docs/golangci-lint/README.md`
 - Upstream readiness notes: `docs/golangci-lint/README.md#upstream-readiness`
 
@@ -175,6 +176,7 @@ For direct integration into `golangci-lint`, import the public analyzer entrypoi
 
 - Module path: `github.com/tobythehutt/anyguard`
 - Analyzer constructor: `anyguard.NewAnalyzer()`
+- The analyzer uses `analysis.Pass.TypesInfo` and runs despite errors so partial type info is still available on ill-typed packages.
 - Analyzer diagnostics follow the same deterministic ordering contract as the CLI and module plugin.
 
 ### License

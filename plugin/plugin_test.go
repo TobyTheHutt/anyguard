@@ -79,7 +79,7 @@ func TestModulePluginGetLoadMode(t *testing.T) {
 		t.Fatalf(errNewPlugin, err)
 	}
 
-	if got, want := pluginInstance.GetLoadMode(), register.LoadModeSyntax; got != want {
+	if got, want := pluginInstance.GetLoadMode(), register.LoadModeTypesInfo; got != want {
 		t.Fatalf("unexpected load mode: got %q want %q", got, want)
 	}
 }
