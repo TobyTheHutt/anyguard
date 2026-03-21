@@ -30,7 +30,9 @@ Packages:
 ### Behavior
 
 - Scans `.go` files under configured roots.
-- Parses AST, resolves identifiers semantically, and reports supported-slot usage of the universe `any` alias.
+- `anyguard` is AST-slot-driven with limited semantic checking: it reports `any` only in explicitly supported AST child slots.
+- That supported-slot list is the public contract. Findings still require the identifier to resolve to the Go universe `any` alias, which keeps shadowed declarations silent.
+- `anyguard` is not a full type-position semantic classifier. Reviewers using a stricter type-position-only rule may treat supported-slot cases such as `any(1)`, `Single[any]{}`, and `Box[int, any]{}` as false positives, but they remain reportable by contract.
 - Compares findings against an allowlist.
 - Supports strict selector-based exceptions, exclude globs, and specific `//nolint` instructions.
 - Exception metadata is minimal. `description` is required.
@@ -49,7 +51,7 @@ Packages:
 
 | Concern | Generic ban-pattern linter | `anyguard` |
 | --- | --- | --- |
-| Basic overlap | Usually bans an identifier, token, or textual pattern and reports matches. | Reports concrete `any` usage too, but only when the identifier resolves semantically to the universe alias in the supported AST slots. |
+| Basic overlap | Usually bans an identifier, token, or textual pattern and reports matches. | Reports `any` only in explicitly supported AST child slots. It also resolves the universe `any` alias so shadowed declarations stay silent. It is not a full type-position semantic classifier, so supported-slot cases such as `any(1)`, `Single[any]{}`, and `Box[int, any]{}` remain reportable by contract. |
 | Allowlist precision | Exceptions are often broad file, symbol, regex, or inline suppression patterns. | Each exception must match one exact selector: `{path, owner, category}`. Broad file-level or owner-only exceptions are not supported in schema version `2`. |
 | Stale selector rejection | Suppressions can drift silently after refactors or when the original finding disappears. | Selectors that no longer resolve to a current finding are rejected as stale or typoed configuration. |
 | Canonical finding identity | Findings are often tied to textual matches or positions only. | Each finding has one canonical identity captured as `{path, owner, category}`, and diagnostics are emitted in deterministic order. |
@@ -88,7 +90,7 @@ Each entry must provide an exact `selector` with the canonical `{path, owner, ca
 
 ### Detection Contract
 
-`anyguard` is slot driven. It only reports `any` when the identifier is the direct child of one of the AST slots below and resolves semantically to the Go universe `any` alias. Anything not listed is unsupported and is not detected or reported (you are welcome to contribute).
+`anyguard` is AST-slot driven. It only reports `any` when the identifier is the direct child of one of the AST slots below, and that supported-slot list is the public contract. Reports also require limited semantic checking: the identifier must resolve to the Go universe `any` alias, which keeps shadowed declarations silent. `anyguard` does not attempt a broader type-position semantic classifier, so supported-slot cases such as `any(1)`, `Single[any]{}`, and `Box[int, any]{}` remain reportable by contract. Anything not listed is unsupported and is not detected or reported (you are welcome to contribute).
 
 The syntax snippets in this section are mirrored in the corpus fixtures under `internal/validation/testdata/corpus/{supported,boundary,unsupported}` so the documented boundary stays testable.
 
@@ -106,6 +108,8 @@ The syntax snippets in this section are mirrored in the corpus fixtures under `i
 | `*ast.CallExpr` | `Fun` | Conversions such as `any(value)` when the callee resolves to the universe alias |
 | `*ast.IndexExpr` | `Index` | Single-argument instantiations such as `Box[any]` when the index resolves to the universe alias |
 | `*ast.IndexListExpr` | `Indices[i]` | Multi-argument instantiations such as `Box[int, any]` when the type argument resolves to the universe alias |
+
+`*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]` are deliberate supported-slot checks. They still resolve the universe `any` alias to suppress shadowed declarations, but cases such as `any(1)`, `Single[any]{}`, and `Box[int, any]{}` remain reportable even though a stricter type-position-only rule might exclude them.
 
 Nested `any` is reportable only when the nested identifier still appears in one of those slots. For example, `type NestedArray map[string][]any` reports because the innermost `any` is still the `Elt` of an `*ast.ArrayType`.
 
