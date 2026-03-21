@@ -41,6 +41,26 @@ Packages:
 - On diagnostics, prints `file:line:column` and a reason.
 - CLI, analyzer, and golangci-lint plugin diagnostics are a compatibility guarantee: they are emitted deterministically in `file`, `line`, `column`, `category`, `owner` order, independent of root order, filesystem traversal, map iteration, formatting noise, and irrelevant comments.
 
+### Comparison With Generic Ban-Pattern Linters
+
+`anyguard` overlaps with generic identifier or pattern ban linters in one narrow way: both can help enforce "do not use `any` here" policy. If that is the whole requirement, a generic ban-pattern linter is simpler.
+
+`anyguard` exists for the narrower case where `any` is allowed at a few explicit boundaries and those exceptions must stay exact, current, and reviewable.
+
+| Concern | Generic ban-pattern linter | `anyguard` |
+| --- | --- | --- |
+| Basic overlap | Usually bans an identifier, token, or textual pattern and reports matches. | Reports concrete `any` usage too, but only when the identifier resolves semantically to the universe alias in the supported AST slots. |
+| Allowlist precision | Exceptions are often broad file, symbol, regex, or inline suppression patterns. | Each exception must match one exact selector: `{path, owner, category}`. Broad file-level or owner-only exceptions are not supported in schema version `2`. |
+| Stale selector rejection | Suppressions can drift silently after refactors or when the original finding disappears. | Selectors that no longer resolve to a current finding are rejected as stale or typoed configuration. |
+| Canonical finding identity | Findings are often tied to textual matches or positions only. | Each finding has one canonical identity captured as `{path, owner, category}`, and diagnostics are emitted in deterministic order. |
+| Configuration hygiene | Config validation is often looser because the tool's job is just pattern matching. | Unknown, malformed, duplicate, ambiguous, and unresolved selectors are rejected and analysis fails closed. |
+| Detection contract | Supported and unsupported cases are often implicit in the matcher. | The README defines the exact supported AST parent/child slots and explicitly documents unsupported and ambiguous cases as part of the public contract. |
+
+The practical answer to "why not use an existing ban-pattern linter?" is:
+
+- Use a generic ban-pattern linter when the policy is simply "match and ban `any`."
+- Use `anyguard` when the policy is "allow only these exact `any` boundary usages, reject stale exceptions, and keep a stable contract for what counts as a finding."
+
 ### Allowlist Schema
 
 The allowlist is strict configuration. The current schema version is `2`.
