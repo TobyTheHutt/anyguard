@@ -64,9 +64,9 @@ func TestValidateAnyUsageCorpusSupportedMatrix(t *testing.T) {
 }
 
 func TestValidateAnyUsageCorpusUnsupportedContexts(t *testing.T) {
-	violations := mustValidateCorpus(t, corpusFixtureUnsupported, testAllowlistEmpty, []string{DefaultRoots})
-	if len(violations) != 0 {
-		t.Fatalf("expected unsupported corpus to remain unreported, got %v", violations)
+	got := collectViolationSummaries(mustValidateCorpus(t, corpusFixtureUnsupported, testAllowlistEmpty, []string{DefaultRoots}))
+	if len(got) != 0 {
+		t.Fatalf("expected unsupported corpus to remain unreported, got %#v", got)
 	}
 }
 

@@ -90,6 +90,8 @@ Each entry must provide an exact `selector` with the canonical `{path, owner, ca
 
 `anyguard` is slot driven. It only reports `any` when the identifier is the direct child of one of the AST slots below and resolves semantically to the Go universe `any` alias. Anything not listed is unsupported and is not detected or reported (you are welcome to contribute).
 
+The syntax snippets in this section are mirrored in the corpus fixtures under `internal/validation/testdata/corpus/{supported,boundary,unsupported}` so the documented boundary stays testable.
+
 | Parent AST node | Child slot | Supported syntax |
 | --- | --- | --- |
 | `*ast.Field` | `Type` | Parameter types, result types, struct field types, and interface field or member types |
@@ -105,15 +107,13 @@ Each entry must provide an exact `selector` with the canonical `{path, owner, ca
 | `*ast.IndexExpr` | `Index` | Single-argument instantiations such as `Box[any]` when the index resolves to the universe alias |
 | `*ast.IndexListExpr` | `Indices[i]` | Multi-argument instantiations such as `Box[int, any]` when the type argument resolves to the universe alias |
 
-Nested `any` is reportable only when the nested identifier still appears in one of those slots. For example, `map[string][]any` reports because the innermost `any` is the `Elt` of an `*ast.ArrayType`.
+Nested `any` is reportable only when the nested identifier still appears in one of those slots. For example, `type NestedArray map[string][]any` reports because the innermost `any` is still the `Elt` of an `*ast.ArrayType`.
 
 #### Unsupported and ambiguous cases
 
-- Type parameter constraints such as `func Use[T any](v T) {}` and `type Box[T any] struct{}`
-- In those examples, `any` constrains `T`. It is not a concrete type position like `func Use(v any) {}` or `type Value = any`
-- Any `any` occurrence whose direct parent child AST relationship is not listed above
-- Identifier names, selectors, assignments, composite literal elements, return expressions, type switch case lists, comments, and string literals
-- Each report requires semantic resolution to the universe `any` alias. Shadowed declarations such as `func any(v int)`, `values[any]` with a local index variable, or `type any interface{}; Box[int, any]{}` stay silent.
+- Type parameter constraints stay silent because `any` constrains a type parameter instead of occupying a concrete supported slot, for example `func Use[T any](value T) {}`.
+- Any `any` occurrence whose direct parent child AST relationship is not listed above stays silent. That includes identifier names, selectors, assignments, composite literal elements, return expressions, type switch case lists, comments, and string literals; for example `func TypeSwitchCaseList(value interface{}) { switch value.(type) { case any, string: } }`.
+- Each report requires semantic resolution to the universe `any` alias. Shadowed declarations stay silent, for example `func any(v int) int` with `any(1)`, `func Use(values []int) int { any := 0; return values[any] }`, or `type any interface{}; Box[int, any]{}`.
 - On invalid or incomplete code, `anyguard` does not guess from bare syntax. It only reports when the identifier can still be resolved as the universe alias.
 - Exact allowlist selectors and `//nolint:anyguard` remain the escape hatches when a resolved universe-`any` usage is intentionally allowed
 

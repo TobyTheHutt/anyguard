@@ -492,6 +492,69 @@ func Use() {
 	}
 }
 
+func TestCollectAnyUsagesIgnoresUnsupportedPositions(t *testing.T) {
+	src := `package p
+
+func Use[T any](value T) {
+	_ = value
+}
+
+type Box[T any] struct {
+	Value T
+}
+
+func TypeSwitchCaseList(value interface{}) {
+	switch value.(type) {
+	case any, string:
+	}
+}
+
+func IdentifierNamedAny(any int) int {
+	holder := struct{ any int }{any: any}
+	_ = []int{any}
+	_ = map[int]int{any: any}
+
+	slot := 0
+	slot = any
+
+	_ = holder.any
+	return any + slot
+}
+
+const text = "any in a string should stay quiet"
+
+// any in a comment should stay quiet.
+`
+
+	got := collectUsageSummaries(t, src)
+	if len(got) != 0 {
+		t.Fatalf("expected unsupported positions to stay quiet, got %#v", got)
+	}
+}
+
+func TestCollectAnyUsagesIgnoresShadowedFunctionAndIndexVariable(t *testing.T) {
+	src := `package p
+
+func any(v int) int {
+	return v
+}
+
+func ShadowedCall() {
+	_ = any(1)
+}
+
+func ShadowedIndex(values []int) int {
+	any := 0
+	return values[any]
+}
+`
+
+	got := collectUsageSummaries(t, src)
+	if len(got) != 0 {
+		t.Fatalf("expected shadowed function and index variable to stay quiet, got %#v", got)
+	}
+}
+
 func TestCollectAnyUsagesTraversesSupportedSlotsInStatements(t *testing.T) {
 	src := `package p
 
