@@ -48,6 +48,8 @@ const (
 	testZetaLaterPath          = "pkg/zeta/later.go"
 	testZetaLaterSource        = "package zeta\nfunc Later() { _, _ = any(1), any(2) }\n"
 	testExpectedNormalizeRoots = "."
+	testUnexpectedDeclUsages   = "unexpected declaration-slot usages:\ngot: %#v\nwant: %#v"
+	testUnexpectedCompUsages   = "unexpected composite-slot usages:\ngot: %#v\nwant: %#v"
 )
 
 func TestLoadAnyAllowlistErrors(t *testing.T) {
@@ -242,7 +244,7 @@ func TestValidateAnyUsageIgnoresPackageShadowedAnyAcrossFiles(t *testing.T) {
 	}
 }
 
-func TestCollectAnyUsagesReportsDeclarationSlotsOnlyForPredeclaredAny(t *testing.T) {
+func TestCollectAnyUsagesDeclarationSlotsReportPredeclaredAny(t *testing.T) {
 	tests := []struct {
 		name string
 		src  string
@@ -270,10 +272,46 @@ func TypeAssert(value interface{}) {
 			},
 		},
 		{
-			name: "shadowed any",
+			name: "local predeclared any",
 			src: `package p
 
-type any interface{}
+func Local(value interface{}) {
+	var local any
+	type LocalAlias = any
+	_ = local
+	_ = value.(any)
+	_ = func(item any) {}
+}
+`,
+			want: []usageSummary{
+				{category: anyCategoryValueSpecType, owner: "Local", line: 4},
+				{category: anyCategoryTypeSpecType, owner: "Local", line: 5},
+				{category: anyCategoryTypeAssertType, owner: "Local", line: 7},
+				{category: anyCategoryFieldType, owner: "Local", line: 8},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := collectUsageSummaries(t, tt.src); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf(testUnexpectedDeclUsages, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCollectAnyUsagesDeclarationSlotsIgnoreNonPredeclaredAny(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []usageSummary
+	}{
+		{
+			name: "user defined any type",
+			src: `package p
+
+type any int
 
 func FieldType(value any) {}
 
@@ -287,18 +325,70 @@ func TypeAssert(value interface{}) {
 `,
 			want: []usageSummary{},
 		},
+		{
+			name: "user defined any alias",
+			src: `package p
+
+type any = string
+
+func FieldType(value any) {}
+
+var ValueSpec any
+
+type TypeSpec = any
+
+func TypeAssert(value interface{}) {
+	_ = value.(any)
+}
+`,
+			want: []usageSummary{},
+		},
+		{
+			name: "package qualifier named any",
+			src: `package p
+
+import any "io"
+
+func FieldType(value any.Reader) {}
+
+var ValueSpec any.Reader
+
+type TypeSpec = any.Reader
+
+func TypeAssert(value interface{}) {
+	_ = value.(any.Reader)
+}
+`,
+			want: []usageSummary{},
+		},
+		{
+			name: "local type named any",
+			src: `package p
+
+func Local(value interface{}) {
+	type any int
+
+	var local any
+	type LocalAlias = any
+	_ = local
+	_ = value.(any)
+	_ = func(item any) {}
+}
+`,
+			want: []usageSummary{},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := collectUsageSummaries(t, tt.src); !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("unexpected declaration-slot usages:\ngot: %#v\nwant: %#v", got, tt.want)
+				t.Fatalf(testUnexpectedDeclUsages, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestCollectAnyUsagesReportsCompositeTypeSlotsOnlyForPredeclaredAny(t *testing.T) {
+func TestCollectAnyUsagesCompositeTypeSlotsReportPredeclaredAny(t *testing.T) {
 	tests := []struct {
 		name string
 		src  string
@@ -333,10 +423,50 @@ func NestedEllipsisAlias(values ...[]any) {}
 			},
 		},
 		{
-			name: "shadowed any",
+			name: "local predeclared any",
 			src: `package p
 
-type any interface{}
+func Local() {
+	var array []any
+	var keyed map[any]string
+	var valued map[string]any
+	var stream chan any
+	var ptr *any
+	_, _, _, _, _ = array, keyed, valued, stream, ptr
+	_ = func(values ...any) {}
+}
+`,
+			want: []usageSummary{
+				{category: anyCategoryArrayTypeElt, owner: "Local", line: 4},
+				{category: anyCategoryMapTypeKey, owner: "Local", line: 5},
+				{category: anyCategoryMapTypeValue, owner: "Local", line: 6},
+				{category: anyCategoryChanTypeValue, owner: "Local", line: 7},
+				{category: anyCategoryStarExprX, owner: "Local", line: 8},
+				{category: anyCategoryEllipsisElt, owner: "Local", line: 10},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := collectUsageSummaries(t, tt.src); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf(testUnexpectedCompUsages, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCollectAnyUsagesCompositeTypeSlotsIgnoreNonPredeclaredAny(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []usageSummary
+	}{
+		{
+			name: "user defined any type",
+			src: `package p
+
+type any int
 
 type ArrayAlias = []any
 type MapKeyAlias = map[any]string
@@ -352,12 +482,62 @@ func NestedEllipsisAlias(values ...[]any) {}
 `,
 			want: []usageSummary{},
 		},
+		{
+			name: "user defined any alias",
+			src: `package p
+
+type any = string
+
+type ArrayAlias = []any
+type MapKeyAlias = map[any]string
+type MapValueAlias = map[string]any
+type ChanAlias = chan any
+type StarAlias = *any
+
+func EllipsisAlias(values ...any) {}
+`,
+			want: []usageSummary{},
+		},
+		{
+			name: "package qualifier named any",
+			src: `package p
+
+import any "io"
+
+type ArrayAlias = []any.Reader
+type MapKeyAlias = map[any.Reader]string
+type MapValueAlias = map[string]any.Reader
+type ChanAlias = chan any.Reader
+type StarAlias = *any.Reader
+
+func EllipsisAlias(values ...any.Reader) {}
+`,
+			want: []usageSummary{},
+		},
+		{
+			name: "local type named any",
+			src: `package p
+
+func Local() {
+	type any int
+
+	var array []any
+	var keyed map[any]string
+	var valued map[string]any
+	var stream chan any
+	var ptr *any
+	_, _, _, _, _ = array, keyed, valued, stream, ptr
+	_ = func(values ...any) {}
+}
+`,
+			want: []usageSummary{},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := collectUsageSummaries(t, tt.src); !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("unexpected composite-slot usages:\ngot: %#v\nwant: %#v", got, tt.want)
+				t.Fatalf(testUnexpectedCompUsages, got, tt.want)
 			}
 		})
 	}
@@ -664,6 +844,39 @@ type any interface{}
 type Payload map[string]any
 `,
 			line: 4,
+			want: false,
+		},
+		{
+			name: "user defined any alias use",
+			src: `package p
+
+type any = string
+type Payload map[string]any
+`,
+			line: 4,
+			want: false,
+		},
+		{
+			name: "package qualifier named any",
+			src: `package p
+
+import any "io"
+
+var _ any.Reader
+`,
+			line: 5,
+			want: false,
+		},
+		{
+			name: "local type named any",
+			src: `package p
+
+func Use() {
+	type any int
+	var _ any
+}
+`,
+			line: 5,
 			want: false,
 		},
 		{
