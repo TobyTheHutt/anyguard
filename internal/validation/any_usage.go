@@ -535,10 +535,11 @@ func collectParsedFileFindings(fset *token.FileSet, info *types.Info, file parse
 }
 
 func lineCode(line int, lines []string) string {
-	if line <= 0 || line > len(lines) {
+	index := line - 1
+	if index < 0 || index >= len(lines) {
 		return ""
 	}
-	return strings.TrimSpace(lines[line-1])
+	return strings.TrimSpace(lines[index])
 }
 
 func newViolation(finding collectedFinding) Error {
