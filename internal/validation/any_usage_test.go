@@ -1,8 +1,12 @@
 package validation
 
 import (
+	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -32,6 +36,12 @@ const (
 	testOwnerBeta              = "Beta"
 	testOwnerZulu              = "Zulu"
 	testSamplePath             = "sample.go"
+	testPackageAPISource       = "package api\n"
+	testPayloadTestFile        = "payload_test.go"
+	testBrokenFile             = "broken.go"
+	testBrokenGoSource         = "package api\nfunc\n"
+	testParseFileErrFmt        = "parse file: %v"
+	testExpectedParseError     = "expected parse error"
 	testPayloadSource          = "package api\ntype Payload map[string]any\n"
 	testAlphaPayloadPath       = "pkg/alpha/payload.go"
 	testAlphaPayloadSource     = "package alpha\ntype Payload map[any]any\n"
@@ -51,7 +61,7 @@ func TestLoadAnyAllowlistErrors(t *testing.T) {
 		t.Fatalf("write invalid file: %v", err)
 	}
 	if _, err := LoadAnyAllowlist(path); err == nil {
-		t.Fatalf("expected parse error")
+		t.Fatal(testExpectedParseError)
 	}
 }
 
@@ -170,7 +180,7 @@ func TestValidateAnyUsageSupportsNolint(t *testing.T) {
 func TestValidateAnyUsageHandlesExcludesAndRoots(t *testing.T) {
 	base := t.TempDir()
 	writeFile(t, apiPath(base, testPayloadFile), testPayloadSource)
-	writeFile(t, apiPath(base, "payload_test.go"), "package api\ntype PayloadTest map[string]any\n")
+	writeFile(t, apiPath(base, testPayloadTestFile), "package api\ntype PayloadTest map[string]any\n")
 
 	allowlist := AnyAllowlist{
 		Version:      anyAllowlistVersion,
@@ -201,10 +211,24 @@ func TestValidateAnyUsageAllowsTypeParamConstraint(t *testing.T) {
 	}
 }
 
+func TestValidateAnyUsageIgnoresPackageShadowedAnyAcrossFiles(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, apiPath(base, "defs.go"), "package api\ntype any interface{}\ntype Single[T any] struct{}\ntype Box[T, U any] struct{}\n")
+	writeFile(t, apiPath(base, "uses.go"), "package api\ntype Payload map[string]any\nfunc Use() {\n\t_ = any(1)\n\t_ = Single[any]{}\n\t_ = Box[int, any]{}\n}\n")
+
+	violations, err := ValidateAnyUsage(AnyAllowlist{Version: anyAllowlistVersion}, base, []string{testRootAPI})
+	if err != nil {
+		t.Fatalf(testValidateUsageErrFmt, err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf(testNoViolationsErrFmt, violations)
+	}
+}
+
 func TestValidateAnyUsageErrorCases(t *testing.T) {
 	base := t.TempDir()
-	writeFile(t, apiPath(base, "ok.go"), "package api\n")
-	writeFile(t, apiPath(base, "broken.go"), "package api\nfunc\n")
+	writeFile(t, apiPath(base, "ok.go"), testPackageAPISource)
+	writeFile(t, apiPath(base, testBrokenFile), testBrokenGoSource)
 	plainFile := filepath.Join(base, "plain.go")
 	if err := os.WriteFile(plainFile, []byte("package main\n"), 0o600); err != nil {
 		t.Fatalf("write plain file: %v", err)
@@ -329,7 +353,7 @@ func TestUtilityFunctions(t *testing.T) {
 	if normalizeRootValue(DefaultRoots) != testExpectedNormalizeRoots {
 		t.Fatalf("expected ./... to normalize to .")
 	}
-	if normalizeRootValue("pkg/api/...") != "pkg/api" {
+	if normalizeRootValue("pkg/api/...") != testRootAPI {
 		t.Fatalf("expected nested pattern root normalization")
 	}
 	if normalizeRootValue("  ") != "" {
@@ -375,14 +399,14 @@ type Alias = any
 var Pair, Other any
 var Top = func(arg any) []any { return nil }
 
-type Holder[T any] struct{}
-func (h *Holder[any]) Run() {}
+type Single[T any] struct{}
+type Box[T, U any] struct{}
 
 func Use(value any) {
 	var local map[string]any
 	type Hidden = any
 	_ = any(value)
-	_ = values[any]
+	_ = Single[any]{}
 	_ = Box[int, any]{}
 	_ = value.(any)
 }
@@ -407,7 +431,6 @@ func Generic[T []any](v T) {}
 		{category: anyCategoryValueSpecType, owner: "Pair", line: 5},
 		{category: anyCategoryFieldType, owner: "Top", line: 6},
 		{category: anyCategoryArrayTypeElt, owner: "Top", line: 6},
-		{category: anyCategoryIndexExprIndex, owner: "Holder", line: 9},
 		{category: anyCategoryFieldType, owner: "Use", line: 11},
 		{category: anyCategoryMapTypeValue, owner: "Use", line: 12},
 		{category: anyCategoryTypeSpecType, owner: "Use", line: 13},
@@ -420,6 +443,52 @@ func Generic[T []any](v T) {}
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected any usages:\ngot: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestCollectAnyUsagesReportsAmbiguousSlotsForUniverseAnyAlias(t *testing.T) {
+	src := `package p
+
+type Single[T any] struct{}
+type Box[T, U any] struct{}
+
+func Use(value any) {
+	_ = any(value)
+	_ = Single[any]{}
+	_ = Box[int, any]{}
+}
+`
+
+	got := collectUsageSummaries(t, src)
+	want := []usageSummary{
+		{category: anyCategoryFieldType, owner: "Use", line: 6},
+		{category: anyCategoryCallExprFun, owner: "Use", line: 7},
+		{category: anyCategoryIndexExprIndex, owner: "Use", line: 8},
+		{category: anyCategoryIndexListIndex, owner: "Use", line: 9},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected ambiguous-slot usages:\ngot: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestCollectAnyUsagesIgnoresShadowedAnyAcrossSupportedSlots(t *testing.T) {
+	src := `package p
+
+type any interface{}
+type Payload map[string]any
+type Single[T any] struct{}
+type Box[T, U any] struct{}
+
+func Use() {
+	_ = any(1)
+	_ = Single[any]{}
+	_ = Box[int, any]{}
+}
+`
+
+	got := collectUsageSummaries(t, src)
+	if len(got) != 0 {
+		t.Fatalf("expected shadowed any to stay quiet, got %#v", got)
 	}
 }
 
@@ -766,6 +835,237 @@ func TestValidateAnyUsageUsesEnclosingFunctionOwnerForLocalDeclarations(t *testi
 	}
 }
 
+func TestCollectParsedPackagesGroupsByDirectoryAndPackage(t *testing.T) {
+	base := t.TempDir()
+	testAPath := normalizePath(filepath.Join(testRootAPI, "a.go"))
+	testZPath := normalizePath(filepath.Join(testRootAPI, "z.go"))
+	testExternalTestPath := normalizePath(filepath.Join(testRootAPI, "external_test.go"))
+
+	writeFile(t, filepath.Join(base, testAPath), testPackageAPISource)
+	writeFile(t, filepath.Join(base, testZPath), testPackageAPISource)
+	writeFile(t, filepath.Join(base, testExternalTestPath), "package api_test\n")
+
+	parsed, err := collectParsedPackages(filepath.Join(base, "pkg"), base, nil)
+	if err != nil {
+		t.Fatalf("collect parsed packages: %v", err)
+	}
+	if parsed.fset == nil {
+		t.Fatalf("expected parsed package collection to retain a file set")
+	}
+	packages := parsed.packages
+
+	if len(packages) != 2 {
+		t.Fatalf("expected two grouped packages, got %d", len(packages))
+	}
+
+	if packages[0].dir != testRootAPI || packages[0].name != testDirAPI {
+		t.Fatalf("unexpected first package: dir=%q name=%q", packages[0].dir, packages[0].name)
+	}
+	if got := []string{packages[0].files[0].relPath, packages[0].files[1].relPath}; !reflect.DeepEqual(got, []string{testAPath, testZPath}) {
+		t.Fatalf("unexpected api package files: got %#v", got)
+	}
+
+	if packages[1].dir != testRootAPI || packages[1].name != "api_test" {
+		t.Fatalf("unexpected second package: dir=%q name=%q", packages[1].dir, packages[1].name)
+	}
+	if len(packages[1].files) != 1 || packages[1].files[0].relPath != testExternalTestPath {
+		t.Fatalf("unexpected api_test package files: %#v", packages[1].files)
+	}
+}
+
+func TestParseRootFileSkipsDirectory(t *testing.T) {
+	base := t.TempDir()
+	fset := token.NewFileSet()
+	entry := dirEntryFromPath(t, base)
+
+	_, keep, err := parseRootFile(fset, base, entry, nil, base, nil)
+	if err != nil {
+		t.Fatalf("parse directory: %v", err)
+	}
+	if keep {
+		t.Fatalf("expected directory to be skipped")
+	}
+}
+
+func TestParseRootFileSkipsExcludedFile(t *testing.T) {
+	base := t.TempDir()
+	fset := token.NewFileSet()
+	path := filepath.Join(base, testRootAPI, testPayloadTestFile)
+	writeFile(t, path, testPackageAPISource)
+	entry := dirEntryFromPath(t, path)
+
+	_, keep, err := parseRootFile(fset, path, entry, nil, base, []string{"**/*_test.go"})
+	if err != nil {
+		t.Fatalf("parse excluded file: %v", err)
+	}
+	if keep {
+		t.Fatalf("expected excluded file to be skipped")
+	}
+}
+
+func TestParseRootFileReportsParseErrors(t *testing.T) {
+	base := t.TempDir()
+	fset := token.NewFileSet()
+	path := filepath.Join(base, testRootAPI, testBrokenFile)
+	writeFile(t, path, testBrokenGoSource)
+	entry := dirEntryFromPath(t, path)
+
+	_, keep, err := parseRootFile(fset, path, entry, nil, base, nil)
+	if err == nil {
+		t.Fatal(testExpectedParseError)
+	}
+	if keep {
+		t.Fatalf("did not expect broken file to be kept")
+	}
+}
+
+func TestParseRootFileReturnsParsedGoFile(t *testing.T) {
+	base := t.TempDir()
+	fset := token.NewFileSet()
+	path := filepath.Join(base, testPayloadPath)
+	writeFile(t, path, testPayloadSource)
+	entry := dirEntryFromPath(t, path)
+
+	parsed, keep, err := parseRootFile(fset, path, entry, nil, base, nil)
+	if err != nil {
+		t.Fatalf(testParseFileErrFmt, err)
+	}
+	if !keep {
+		t.Fatalf("expected go file to be kept")
+	}
+	if parsed.relPath != testPayloadPath {
+		t.Fatalf("unexpected rel path: %q", parsed.relPath)
+	}
+	if parsed.syntax.Name.Name != testDirAPI {
+		t.Fatalf("unexpected package name: %q", parsed.syntax.Name.Name)
+	}
+}
+
+func TestTypeCheckParsedPackageKeepsPartialInfoOnErrors(t *testing.T) {
+	src := `package api
+
+func Use(value any) {
+	_ = Missing
+	_ = any(value)
+}
+`
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, testSamplePath, src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf(testParseFileErrFmt, err)
+	}
+
+	info := typeCheckParsedPackage(fset, importer.ForCompiler(fset, sourceImporterMode, nil), parsedPackage{
+		dir:  testRootAPI,
+		name: testDirAPI,
+		files: []parsedGoFile{
+			{
+				relPath: testSamplePath,
+				content: []byte(src),
+				syntax:  file,
+			},
+		},
+	})
+
+	got := collectAnyUsages(testSamplePath, file, info)
+	want := []usageSummary{
+		{category: anyCategoryFieldType, owner: "Use", line: 3},
+		{category: anyCategoryCallExprFun, owner: "Use", line: 5},
+	}
+	if summaries := summarizeUsages(fset, got); !reflect.DeepEqual(summaries, want) {
+		t.Fatalf("unexpected partial-type-info usages:\ngot: %#v\nwant: %#v", summaries, want)
+	}
+}
+
+func TestNormalizePathAndLineCodeHelpers(t *testing.T) {
+	if got := normalizePath(" ./pkg/api/../api/payload.go "); got != testPayloadPath {
+		t.Fatalf("unexpected normalized path: %q", got)
+	}
+	if got := lineCode(0, []string{"first"}); got != "" {
+		t.Fatalf("expected empty code for line 0, got %q", got)
+	}
+	if got := lineCode(2, []string{"first", " second "}); got != "second" {
+		t.Fatalf("unexpected line code: %q", got)
+	}
+	if got := lineCode(3, []string{"first"}); got != "" {
+		t.Fatalf("expected empty code for out-of-range line, got %q", got)
+	}
+}
+
+func TestValueSpecOwnerPrefersFirstDeclaredName(t *testing.T) {
+	src := `package p
+
+var First, Second int
+`
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, testSamplePath, src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf(testParseFileErrFmt, err)
+	}
+
+	valueDecl, ok := file.Decls[0].(*ast.GenDecl)
+	if !ok || len(valueDecl.Specs) == 0 {
+		t.Fatalf("expected leading value declaration")
+	}
+	valueSpec, ok := valueDecl.Specs[0].(*ast.ValueSpec)
+	if !ok {
+		t.Fatalf("expected leading value spec")
+	}
+
+	if got := valueSpecOwner(valueSpec); got != "First" {
+		t.Fatalf("unexpected value spec owner: %q", got)
+	}
+	if got := valueSpecOwner(&ast.ValueSpec{Names: []*ast.Ident{nil}}); got != "" {
+		t.Fatalf("expected empty owner for nil name, got %q", got)
+	}
+}
+
+func TestFuncDeclOwnerUsesReceiverTypeName(t *testing.T) {
+	src := `package p
+
+func Plain() {}
+
+type Receiver[T any] struct{}
+type Pair[T, U any] struct{}
+
+func (r *Receiver[int]) Method() {}
+func (p Pair[int, string]) Multi() {}
+`
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, testSamplePath, src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf(testParseFileErrFmt, err)
+	}
+
+	plainDecl, ok := file.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected plain function declaration")
+	}
+	methodDecl, ok := file.Decls[3].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected method declaration")
+	}
+	multiDecl, ok := file.Decls[4].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected indexed receiver method declaration")
+	}
+	if got := funcDeclOwner(plainDecl); got != "Plain" {
+		t.Fatalf("unexpected plain function owner: %q", got)
+	}
+	if got := funcDeclOwner(methodDecl); got != "Receiver" {
+		t.Fatalf("unexpected method owner: %q", got)
+	}
+	if got := funcDeclOwner(multiDecl); got != "Pair" {
+		t.Fatalf("unexpected indexed receiver owner: %q", got)
+	}
+	if got := receiverTypeName(&ast.SelectorExpr{}); got != "" {
+		t.Fatalf("expected unsupported receiver expression to stay empty, got %q", got)
+	}
+}
+
 type usageSummary struct {
 	category anyUsageCategory
 	owner    string
@@ -786,10 +1086,30 @@ func collectUsageSummaries(t *testing.T, src string) []usageSummary {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "sample.go", src, parser.ParseComments)
 	if err != nil {
-		t.Fatalf("parse file: %v", err)
+		t.Fatalf(testParseFileErrFmt, err)
 	}
 
-	usages := collectAnyUsages(testSamplePath, file)
+	info := typeCheckTestFile(fset, file)
+	return summarizeUsages(fset, collectAnyUsages(testSamplePath, file, info))
+}
+
+func typeCheckTestFile(fset *token.FileSet, file *ast.File) *types.Info {
+	info := &types.Info{
+		Uses: make(map[*ast.Ident]types.Object),
+	}
+	config := types.Config{
+		DisableUnusedImportCheck: true,
+		Error:                    func(error) {},
+		Importer:                 importer.ForCompiler(fset, sourceImporterMode, nil),
+	}
+	// Focused snippets may omit unrelated declarations; partial type info is enough here.
+	if _, err := config.Check("sample", fset, []*ast.File{file}, info); err != nil {
+		return info
+	}
+	return info
+}
+
+func summarizeUsages(fset *token.FileSet, usages []anyUsage) []usageSummary {
 	summaries := make([]usageSummary, 0, len(usages))
 	for _, usage := range usages {
 		summaries = append(summaries, usageSummary{
@@ -799,6 +1119,16 @@ func collectUsageSummaries(t *testing.T, src string) []usageSummary {
 		})
 	}
 	return summaries
+}
+
+func dirEntryFromPath(t *testing.T, path string) fs.DirEntry {
+	t.Helper()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return fs.FileInfoToDirEntry(info)
 }
 
 func collectViolationSummaries(violations []Error) []violationSummary {

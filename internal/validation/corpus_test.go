@@ -32,8 +32,8 @@ func TestValidateAnyUsageCorpusSupportedMatrix(t *testing.T) {
 			{file: "pkg/api/supported.go", owner: "EllipsisDisallowed", category: string(anyCategoryEllipsisElt), line: 19, column: 35},
 			{file: "pkg/api/supported.go", owner: "TypeAssertDisallowed", category: string(anyCategoryTypeAssertType), line: 22, column: 13},
 			{file: "pkg/api/supported.go", owner: "CallExprDisallowed", category: string(anyCategoryCallExprFun), line: 26, column: 6},
-			{file: "pkg/api/supported.go", owner: "IndexExprDisallowed", category: string(anyCategoryIndexExprIndex), line: 30, column: 13},
-			{file: "pkg/api/supported.go", owner: "IndexListDisallowed", category: string(anyCategoryIndexListIndex), line: 36, column: 15},
+			{file: "pkg/api/supported.go", owner: "IndexExprDisallowed", category: string(anyCategoryIndexExprIndex), line: 34, column: 13},
+			{file: "pkg/api/supported.go", owner: "IndexListDisallowed", category: string(anyCategoryIndexListIndex), line: 38, column: 15},
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("unexpected supported corpus violations:\ngot: %#v\nwant: %#v", got, want)
