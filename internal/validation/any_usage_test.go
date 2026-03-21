@@ -298,6 +298,82 @@ func TypeAssert(value interface{}) {
 	}
 }
 
+func TestCollectAnyUsagesReportsCompositeTypeSlotsOnlyForPredeclaredAny(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []usageSummary
+	}{
+		{
+			name: "predeclared any",
+			src: `package p
+
+type ArrayAlias = []any
+type MapKeyAlias = map[any]string
+type MapValueAlias = map[string]any
+type ChanAlias = chan any
+type StarAlias = *any
+
+type NestedArrayAlias = map[string][]any
+type NestedMapAlias = []map[string]any
+
+func EllipsisAlias(values ...any) {}
+func NestedEllipsisAlias(values ...[]any) {}
+`,
+			want: []usageSummary{
+				{category: anyCategoryArrayTypeElt, owner: "ArrayAlias", line: 3},
+				{category: anyCategoryMapTypeKey, owner: "MapKeyAlias", line: 4},
+				{category: anyCategoryMapTypeValue, owner: "MapValueAlias", line: 5},
+				{category: anyCategoryChanTypeValue, owner: "ChanAlias", line: 6},
+				{category: anyCategoryStarExprX, owner: "StarAlias", line: 7},
+				{category: anyCategoryArrayTypeElt, owner: "NestedArrayAlias", line: 9},
+				{category: anyCategoryMapTypeValue, owner: "NestedMapAlias", line: 10},
+				{category: anyCategoryEllipsisElt, owner: "EllipsisAlias", line: 12},
+				{category: anyCategoryArrayTypeElt, owner: "NestedEllipsisAlias", line: 13},
+			},
+		},
+		{
+			name: "shadowed any",
+			src: `package p
+
+type any interface{}
+
+type ArrayAlias = []any
+type MapKeyAlias = map[any]string
+type MapValueAlias = map[string]any
+type ChanAlias = chan any
+type StarAlias = *any
+
+type NestedArrayAlias = map[string][]any
+type NestedMapAlias = []map[string]any
+
+func EllipsisAlias(values ...any) {}
+func NestedEllipsisAlias(values ...[]any) {}
+`,
+			want: []usageSummary{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := collectUsageSummaries(t, tt.src); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("unexpected composite-slot usages:\ngot: %#v\nwant: %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestVisitCompositeTypeAnySlotIgnoresNilExpr(t *testing.T) {
+	collector := anyUsageCollector{
+		file: testSamplePath,
+		info: &types.Info{Uses: make(map[*ast.Ident]types.Object)},
+	}
+	collector.visitCompositeTypeAnySlot(anyCategoryArrayTypeElt, "Owner", nil)
+	if len(collector.usages) != 0 {
+		t.Fatalf("expected nil composite slot to stay quiet, got %#v", collector.usages)
+	}
+}
+
 func TestValidateAnyUsageErrorCases(t *testing.T) {
 	base := t.TempDir()
 	writeFile(t, apiPath(base, "ok.go"), testPackageAPISource)
