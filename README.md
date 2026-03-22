@@ -148,7 +148,8 @@ Nested `any` is reportable only when the nested identifier still appears in one 
 - Allowlist read, parse, and validation errors halt analysis with an error
 - Stale, unresolved, malformed, or ambiguous allowlist selectors halt analysis with an error
 - Root resolution, filesystem traversal, and Go parse errors halt CLI validation with an error
-- Analyzer path resolution fails closed when a file cannot be mapped to a canonical repository-relative path under the repository root
+- Analyzer path resolution fails closed when a repository file cannot be mapped to a canonical repository-relative path under the repository root
+- Toolchain-generated synthetic `go test` main files outside the repository root are skipped because they are not canonical source files for reporting
 - Analyzer files with no filename or no token file are skipped
 - Changing the supported slots above requires an explicit README update because this section is the public compatibility contract
 
