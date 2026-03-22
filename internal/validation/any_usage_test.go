@@ -25,9 +25,14 @@ const (
 	testLinuxOKFile            = "linux_ok.go"
 	testPayloadWindowsFile     = "payload_windows.go"
 	testPayloadAMD64File       = "payload_amd64.go"
+	testPayloadCustomFile      = "payload_custom.go"
 	testSafeSource             = "package api\ntype Safe struct{ Value string }\n"
 	testPayloadFile            = "payload.go"
 	testAllowlistFile          = "allowlist.yaml"
+	testBuildTagCustom         = "custom"
+	testBuildTagExtra          = "extra"
+	testGOFLAGSCustom          = "-tags=custom"
+	testCustomTaggedPayloadSrc = "//go:build custom\n\npackage api\n\ntype Payload map[string]any\n"
 	testPayloadBoundaryDesc    = "payload boundary"
 	testWriteAllowlistErrFmt   = "write allowlist: %v"
 	testUnexpectedErrFmt       = "unexpected error: %v"
@@ -289,6 +294,43 @@ func TestValidateAnyUsageSkipsInactiveGOARCHFiles(t *testing.T) {
 	}
 	assertBuildContextViolations(t, base, buildEnv{goos: testGOOSLinux, goarch: testGOARCHARM64}, nil)
 	assertBuildContextViolations(t, base, buildEnv{goos: testGOOSLinux, goarch: testGOARCHAMD64}, want)
+}
+
+func TestValidateAnyUsageSkipsInactiveGOFLAGTaggedFiles(t *testing.T) {
+	base := t.TempDir()
+	customPath := normalizePath(filepath.Join(testRootAPI, testPayloadCustomFile))
+
+	writeFile(t, apiPath(base, testLinuxOKFile), testSafeSource)
+	writeFile(t, filepath.Join(base, customPath), testCustomTaggedPayloadSrc)
+
+	want := []violationSummary{
+		{file: customPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeValue), line: 5, column: 25},
+	}
+	assertBuildContextViolations(t, base, buildEnv{goos: testGOOSLinux, goarch: testGOARCHAMD64}, nil)
+	assertBuildContextViolations(t, base, buildEnv{goos: testGOOSLinux, goarch: testGOARCHAMD64, goflags: testGOFLAGSCustom}, want)
+}
+
+func TestValidateAnyUsageAllowsTaggedFileFromGOFLAGS(t *testing.T) {
+	base := t.TempDir()
+	customPath := normalizePath(filepath.Join(testRootAPI, testPayloadCustomFile))
+
+	writeFile(t, filepath.Join(base, customPath), testCustomTaggedPayloadSrc)
+	applyBuildEnv(t, buildEnv{goos: testGOOSLinux, goarch: testGOARCHAMD64, goflags: testGOFLAGSCustom})
+
+	allowlist := AnyAllowlist{
+		Version: anyAllowlistVersion,
+		Entries: []AnyAllowlistEntry{
+			allowlistEntry(customPath, testOwnerPayload, anyCategoryMapTypeValue, 5, 25, "custom build-tag boundary"),
+		},
+	}
+
+	violations, err := ValidateAnyUsage(allowlist, base, []string{testRootAPI})
+	if err != nil {
+		t.Fatalf(testValidateUsageErrFmt, err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf(testNoViolationsErrFmt, violations)
+	}
 }
 
 func TestValidateAnyUsageAllowsTypeParamConstraint(t *testing.T) {
@@ -1548,7 +1590,7 @@ func TestCollectParsedPackagesGroupsByDirectoryAndPackage(t *testing.T) {
 	writeFile(t, filepath.Join(base, testZPath), testPackageAPISource)
 	writeFile(t, filepath.Join(base, testExternalTestPath), "package api_test\n")
 
-	parsed, err := collectParsedPackages(filepath.Join(base, "pkg"), base, nil)
+	parsed, err := collectParsedPackages(filepath.Join(base, "pkg"), base, nil, nil)
 	if err != nil {
 		t.Fatalf("collect parsed packages: %v", err)
 	}
@@ -1795,6 +1837,7 @@ type buildEnv struct {
 	goos       string
 	goarch     string
 	cgoEnabled string
+	goflags    string
 }
 
 type violationSummary struct {
@@ -2006,7 +2049,14 @@ func assertBuildContextViolations(t *testing.T, base string, env buildEnv, want 
 		want = []violationSummary{}
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("unexpected build-context violations for GOOS=%q GOARCH=%q:\ngot: %#v\nwant: %#v", env.goos, env.goarch, got, want)
+		t.Fatalf(
+			"unexpected build-context violations for GOOS=%q GOARCH=%q GOFLAGS=%q:\ngot: %#v\nwant: %#v",
+			env.goos,
+			env.goarch,
+			env.goflags,
+			got,
+			want,
+		)
 	}
 }
 
@@ -2044,15 +2094,50 @@ func TestCurrentBuildContextRespectsCGOEnabledEnv(t *testing.T) {
 	}
 }
 
+func TestCurrentBuildContextRespectsGOFLAGSBuildTags(t *testing.T) {
+	testCases := []struct {
+		name string
+		env  buildEnv
+		want []string
+	}{
+		{
+			name: "no tags",
+			env:  buildEnv{},
+			want: nil,
+		},
+		{
+			name: "comma-separated",
+			env:  buildEnv{goflags: "-tags=custom,extra"},
+			want: []string{testBuildTagCustom, testBuildTagExtra},
+		},
+		{
+			name: "quoted list",
+			env:  buildEnv{goflags: "\"-tags=custom extra\""},
+			want: []string{testBuildTagCustom, testBuildTagExtra},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			applyBuildEnv(t, testCase.env)
+
+			if got := currentBuildContext().BuildTags; !reflect.DeepEqual(got, testCase.want) {
+				t.Fatalf("unexpected build tags: got %#v want %#v", got, testCase.want)
+			}
+		})
+	}
+}
+
 func applyBuildEnv(t *testing.T, env buildEnv) {
 	t.Helper()
 
 	t.Setenv(goosEnvVar, env.goos)
 	t.Setenv(goarchEnvVar, env.goarch)
 	t.Setenv(cgoEnabledEnvVar, env.cgoEnabled)
+	t.Setenv(goflagsEnvVar, env.goflags)
 }
 
-func testBuildContext(goos, goarch string) *build.Context {
+func testBuildContext(goos, goarch string, buildTags ...string) *build.Context {
 	ctx := build.Default
 	if goos != "" {
 		ctx.GOOS = goos
@@ -2060,5 +2145,6 @@ func testBuildContext(goos, goarch string) *build.Context {
 	if goarch != "" {
 		ctx.GOARCH = goarch
 	}
+	ctx.BuildTags = append([]string(nil), buildTags...)
 	return &ctx
 }

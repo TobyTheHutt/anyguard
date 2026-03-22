@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"go/build"
 	"path/filepath"
 	"reflect"
 	"sync"
@@ -21,17 +22,21 @@ const (
 func TestNewRepoValidationCacheKeyNormalizesInputs(t *testing.T) {
 	base := t.TempDir()
 	repoRoot := filepath.Join(base, testCacheRepoName, ".")
+	buildKeyA := buildContextCacheKey(testBuildContext(testGOOSLinux, testGOARCHAMD64, testBuildTagCustom, testBuildTagExtra))
+	buildKeyB := buildContextCacheKey(testBuildContext(testGOOSLinux, testGOARCHAMD64, testBuildTagExtra, testBuildTagCustom))
 	keyA := newRepoValidationCacheKey(
 		repoRoot,
 		[]string{"./...", filepath.Join(base, testCacheRepoName, testDirPkg, testDirAPI)},
 		testCacheFingerprintA,
 		[]string{" ./internal/** ", "**/*_test.go"},
+		buildKeyA,
 	)
 	keyB := newRepoValidationCacheKey(
 		filepath.Join(base, testCacheRepoName),
 		[]string{"pkg/api", "."},
 		testCacheFingerprintA,
 		[]string{"**/*_test.go", "internal/**"},
+		buildKeyB,
 	)
 
 	if keyA != keyB {
@@ -43,9 +48,21 @@ func TestNewRepoValidationCacheKeyNormalizesInputs(t *testing.T) {
 		[]string{"pkg/api", "."},
 		testCacheFingerprintB,
 		[]string{"**/*_test.go", "internal/**"},
+		buildKeyA,
 	)
 	if keyA == keyC {
 		t.Fatalf("expected allowlist fingerprint to affect cache key")
+	}
+
+	keyD := newRepoValidationCacheKey(
+		filepath.Join(base, testCacheRepoName),
+		[]string{"pkg/api", "."},
+		testCacheFingerprintA,
+		[]string{"**/*_test.go", "internal/**"},
+		buildContextCacheKey(testBuildContext(testGOOSLinux, testGOARCHAMD64, testBuildTagCustom)),
+	)
+	if keyA == keyD {
+		t.Fatalf("expected build constraints to affect cache key")
 	}
 }
 
@@ -58,12 +75,14 @@ func TestRepoValidationCacheReusesNormalizedKey(t *testing.T) {
 		[]string{"./...", filepath.Join(base, testCacheRepoName, testDirPkg, testDirAPI)},
 		testCacheFingerprintA,
 		[]string{" ./internal/** ", "**/*_test.go"},
+		buildContextCacheKey(testBuildContext(testGOOSLinux, testGOARCHAMD64, testBuildTagCustom)),
 	)
 	keyB := newRepoValidationCacheKey(
 		filepath.Join(base, testCacheRepoName),
 		[]string{"pkg/api", "."},
 		testCacheFingerprintA,
 		[]string{"**/*_test.go", "internal/**"},
+		buildContextCacheKey(testBuildContext(testGOOSLinux, testGOARCHAMD64, testBuildTagCustom)),
 	)
 
 	want := repoValidationResult{
@@ -107,6 +126,7 @@ func TestRepoValidationCacheConcurrentAccessCollapsesMisses(t *testing.T) {
 		[]string{DefaultRoots},
 		testCacheFingerprintA,
 		[]string{"**/*_test.go"},
+		buildContextCacheKey(testBuildContext(testGOOSLinux, testGOARCHAMD64, testBuildTagCustom)),
 	)
 
 	want := repoValidationResult{
@@ -185,9 +205,14 @@ func TestAnalyzerRunReusesRepoValidationCacheAcrossPasses(t *testing.T) {
 
 	originalCollector := repoValidationResultCollector
 	var calls atomic.Int64
-	repoValidationResultCollector = func(repoRoot string, roots []string, allowlist AnyAllowlist) (repoValidationResult, error) {
+	repoValidationResultCollector = func(
+		repoRoot string,
+		roots []string,
+		allowlist AnyAllowlist,
+		buildCtx *build.Context,
+	) (repoValidationResult, error) {
 		calls.Add(1)
-		return originalCollector(repoRoot, roots, allowlist)
+		return originalCollector(repoRoot, roots, allowlist, buildCtx)
 	}
 	t.Cleanup(func() {
 		repoValidationResultCollector = originalCollector

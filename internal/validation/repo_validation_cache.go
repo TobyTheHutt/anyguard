@@ -2,6 +2,7 @@ package validation
 
 import (
 	"errors"
+	"go/build"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -19,6 +20,7 @@ type repoValidationCacheKey struct {
 	roots       string
 	allowlistID string
 	exclude     string
+	build       string
 }
 
 type repoValidationCache struct {
@@ -32,7 +34,7 @@ type repoValidationCache struct {
 // eviction would increase hot-path synchronization without a practical benefit.
 var processRepoValidationCache repoValidationCache
 
-var repoValidationResultCollector = collectRepoValidationResult
+var repoValidationResultCollector = collectRepoValidationResultWithBuildContext
 
 func loadRepoValidationResult(
 	repoRoot string,
@@ -40,14 +42,26 @@ func loadRepoValidationResult(
 	allowlist AnyAllowlist,
 	allowlistFingerprint string,
 ) (repoValidationResult, error) {
-	key := newRepoValidationCacheKey(repoRoot, roots, allowlistFingerprint, allowlist.ExcludeGlobs)
+	buildCtx := currentBuildContext()
+	key := newRepoValidationCacheKey(
+		repoRoot,
+		roots,
+		allowlistFingerprint,
+		allowlist.ExcludeGlobs,
+		buildContextCacheKey(buildCtx),
+	)
 	return processRepoValidationCache.load(key, func() (repoValidationResult, error) {
-		return repoValidationResultCollector(repoRoot, roots, allowlist)
+		return repoValidationResultCollector(repoRoot, roots, allowlist, buildCtx)
 	})
 }
 
-func collectRepoValidationResult(repoRoot string, roots []string, allowlist AnyAllowlist) (repoValidationResult, error) {
-	findings, err := collectFindings(repoRoot, roots, allowlist.ExcludeGlobs)
+func collectRepoValidationResultWithBuildContext(
+	repoRoot string,
+	roots []string,
+	allowlist AnyAllowlist,
+	buildCtx *build.Context,
+) (repoValidationResult, error) {
+	findings, err := collectFindingsWithBuildContext(repoRoot, roots, allowlist.ExcludeGlobs, buildCtx)
 	if err != nil {
 		return repoValidationResult{}, err
 	}
@@ -65,6 +79,7 @@ func newRepoValidationCacheKey(
 	roots []string,
 	allowlistFingerprint string,
 	excludeGlobs []string,
+	buildKey string,
 ) repoValidationCacheKey {
 	cleanRepoRoot := filepath.Clean(repoRoot)
 	normalizedRoots := normalizeConfiguredRoots(roots, cleanRepoRoot)
@@ -78,6 +93,7 @@ func newRepoValidationCacheKey(
 		roots:       strings.Join(normalizedRoots, "\n"),
 		allowlistID: strings.TrimSpace(allowlistFingerprint),
 		exclude:     strings.Join(normalizedGlobs, "\n"),
+		build:       strings.TrimSpace(buildKey),
 	}
 }
 
@@ -129,7 +145,7 @@ func (cache *repoValidationCache) load(
 }
 
 func (key repoValidationCacheKey) singleflightKey() string {
-	return strings.Join([]string{key.repoRoot, key.roots, key.allowlistID, key.exclude}, "\x00")
+	return strings.Join([]string{key.repoRoot, key.roots, key.allowlistID, key.exclude, key.build}, "\x00")
 }
 
 func resetProcessRepoValidationCacheForTesting() {

@@ -89,10 +89,17 @@ func TestAnalyzerRunReportsPackageLocalDiagnosticsAndReusesRepoValidation(t *tes
 		allowlist AnyAllowlist,
 		allowlistFingerprint string,
 	) (repoValidationResult, error) {
-		key := newRepoValidationCacheKey(repoRoot, roots, allowlistFingerprint, allowlist.ExcludeGlobs)
+		buildCtx := currentBuildContext()
+		key := newRepoValidationCacheKey(
+			repoRoot,
+			roots,
+			allowlistFingerprint,
+			allowlist.ExcludeGlobs,
+			buildContextCacheKey(buildCtx),
+		)
 		return cache.load(key, func() (repoValidationResult, error) {
 			repoValidationCalls++
-			return collectRepoValidationResult(repoRoot, roots, allowlist)
+			return collectRepoValidationResultWithBuildContext(repoRoot, roots, allowlist, buildCtx)
 		})
 	}
 
