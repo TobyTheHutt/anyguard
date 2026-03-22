@@ -56,9 +56,9 @@ Packages:
 | Concern | Generic ban-pattern linter | `anyguard` |
 | --- | --- | --- |
 | Basic overlap | Usually bans an identifier, token, or textual pattern and reports matches. | Reports `any` only in explicitly supported AST child slots, and every supported slot resolves the universe `any` alias so shadowed declarations stay silent. The dedicated type-position slots are semantically resolved, and `*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]` remain deliberate compatibility slots for conversions and generic instantiations. |
-| Allowlist precision | Exceptions are often broad file, symbol, regex, or inline suppression patterns. | Each exception must match one exact selector: `{path, owner, category}`. Broad file-level or owner-only exceptions are not supported in schema version `2`. |
+| Allowlist precision | Exceptions are often broad file, symbol, regex, or inline suppression patterns. | Each exception resolves to one exact selector identity: `{path, owner, category, line, column}`. Legacy selectors without coordinates are accepted only when `{path, owner, category}` still resolves to exactly one current finding. Broad file-level or owner-only exceptions are not supported in schema version `2`. |
 | Stale selector rejection | Suppressions can drift silently after refactors or when the original finding disappears. | Selectors that no longer resolve to a current finding are rejected as stale or typoed configuration. |
-| Canonical finding identity | Findings are often tied to textual matches or positions only. | Each finding has one canonical identity captured as `{path, owner, category}`, and diagnostics are emitted in deterministic order. |
+| Canonical finding identity | Findings are often tied to textual matches or positions only. | Each finding has one canonical identity captured as `{path, owner, category, line, column}`, and diagnostics are emitted in deterministic order. |
 | Configuration hygiene | Config validation is often looser because the tool's job is just pattern matching. | Unknown, malformed, duplicate, ambiguous, and unresolved selectors are rejected and analysis fails closed. |
 | Detection contract | Supported and unsupported cases are often implicit in the matcher. | The README defines the exact supported AST parent/child slots and explicitly documents unsupported and ambiguous cases as part of the public contract. |
 
@@ -80,16 +80,20 @@ entries:
       path: internal/validation/analyzer.go
       owner: analyzerConfig
       category: "*ast.Field.Type"
+      line: 84
+      column: 54
     description: go/analysis Run API requires returning `any`
 ```
 
-Each entry must provide an exact `selector` with the canonical `{path, owner, category}` finding identity.
+Each entry must resolve to one exact finding. The canonical finding identity is `{path, owner, category, line, column}`.
 
 - Unknown fields are rejected during YAML decoding
 - Unknown categories are rejected during validation
 - Missing or malformed selector objects are rejected during validation
+- Selectors that set only one of `line` or `column` are rejected during validation
 - Duplicate selectors are rejected as ambiguous configuration
 - Selectors that do not resolve to any collected finding are rejected as stale or typoed configuration
+- Legacy selectors that omit `line` and `column` are accepted only when their `{path, owner, category}` triple resolves to exactly one current finding. Collisions are rejected as ambiguous configuration
 - Broad file-level or owner-only allowlist entries are not supported in version `2`
 
 ### Detection Contract
@@ -139,7 +143,10 @@ Nested `any` is reportable only when the nested identifier still appears in one 
 - `*ast.FuncDecl` uses the function name, or the receiver type name for methods
 - Local declarations inside a function or method inherit that enclosing function or receiver type owner
 - Category identity is the supported AST slot label captured at collection time, for example `*ast.MapType.Value`
-- Allowlist selectors match only by the exact collected `{path, owner, category}` identity
+- Line and column identity are the exact 1-based source coordinates of the matched `any` token
+- Canonical finding identity is the exact collected `{path, owner, category, line, column}` tuple
+- Allowlist selectors with `line` and `column` match only by that exact collected identity
+- Legacy selectors without coordinates are resolved only if their `{path, owner, category}` triple matches exactly one current finding
 - Owner or category are never inferred during allowlist matching
 - A selector that does not resolve to a current finding is treated as a configuration error
 

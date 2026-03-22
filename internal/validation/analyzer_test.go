@@ -433,10 +433,10 @@ func TestCollectAnalyzerViolationsSortsAcrossFileOrder(t *testing.T) {
 		{relPath: testAlphaPayloadPath, tokenFile: alphaFile},
 	}
 	findings := []collectedFinding{
-		{identity: newFindingIdentity(testZetaLaterPath, testOwnerLater, anyCategoryCallExprFun), line: 2, column: 31},
-		{identity: newFindingIdentity(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeValue), line: 2, column: 22},
-		{identity: newFindingIdentity(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeKey), line: 2, column: 18},
-		{identity: newFindingIdentity(testZetaLaterPath, testOwnerLater, anyCategoryCallExprFun), line: 2, column: 23},
+		{identity: newFindingIdentity(testZetaLaterPath, testOwnerLater, anyCategoryCallExprFun, 2, 31), line: 2, column: 31},
+		{identity: newFindingIdentity(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, 2, 22), line: 2, column: 22},
+		{identity: newFindingIdentity(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeKey, 2, 18), line: 2, column: 18},
+		{identity: newFindingIdentity(testZetaLaterPath, testOwnerLater, anyCategoryCallExprFun, 2, 23), line: 2, column: 23},
 	}
 
 	reportable := collectAnalyzerViolations(files, findings, anyAllowlistIndex{})
@@ -483,6 +483,8 @@ func TestReportViolationUsesLineAndColumn(t *testing.T) {
 			File:     "pkg/report.go",
 			Owner:    "Use",
 			Category: string(anyCategoryCallExprFun),
+			Line:     2,
+			Column:   18,
 		},
 	})
 

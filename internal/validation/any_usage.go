@@ -26,15 +26,17 @@ import (
 const anyguardLinter = "anyguard"
 
 const (
-	anyAllowlistVersion = 2
-	rootWildcardSuffix  = "/..."
-	rootAllPattern      = "..."
-	anyTokenMarker      = "<<ANY>>"
-	anyName             = "any"
-	sourceImporterMode  = "source"
-	goosEnvVar          = "GOOS"
-	goarchEnvVar        = "GOARCH"
-	cgoEnabledEnvVar    = "CGO_ENABLED"
+	anyAllowlistVersion   = 2
+	rootWildcardSuffix    = "/..."
+	rootAllPattern        = "..."
+	anyTokenMarker        = "<<ANY>>"
+	anyName               = "any"
+	sourceImporterMode    = "source"
+	goosEnvVar            = "GOOS"
+	goarchEnvVar          = "GOARCH"
+	cgoEnabledEnvVar      = "CGO_ENABLED"
+	errDuplicateSelector  = "any allowlist entries %d and %d resolve to the same selector %s"
+	errUnresolvedSelector = "any allowlist entry %d selector %s does not match any finding"
 )
 
 var nolintDirectiveRE = regexp.MustCompile(`(?i)\bnolint(?::([a-z0-9_,-]+))?`)
@@ -71,6 +73,8 @@ type FindingIdentity struct {
 	File     string
 	Owner    string
 	Category string
+	Line     int
+	Column   int
 }
 
 // AnyAllowlist captures approved any-usage locations for enforcement.
@@ -81,11 +85,14 @@ type AnyAllowlist struct {
 }
 
 // AnyAllowlistSelector describes the canonical finding identity a strict allowlist
-// entry must resolve to.
+// entry must resolve to. Line and column may be omitted only for legacy
+// selectors that still resolve uniquely.
 type AnyAllowlistSelector struct {
 	Path     string `yaml:"path"`
 	Owner    string `yaml:"owner"`
 	Category string `yaml:"category"`
+	Line     int    `yaml:"line"`
+	Column   int    `yaml:"column"`
 }
 
 // AnyAllowlistEntry describes a scoped any-usage exception.
@@ -505,7 +512,7 @@ func validateAllowlistEntry(entry AnyAllowlistEntry, index int, seenSelectors ma
 	identity := selector.identity()
 	if prev, exists := seenSelectors[identity]; exists {
 		return AnyAllowlistEntry{}, fmt.Errorf(
-			"any allowlist entries %d and %d resolve to the same selector %s",
+			errDuplicateSelector,
 			prev,
 			index,
 			formatFindingIdentity(identity),
@@ -539,6 +546,15 @@ func normalizeValidatedSelector(selector *AnyAllowlistSelector, index int) (AnyA
 			normalized.Category,
 		)
 	}
+	if normalized.Line == 0 && normalized.Column == 0 {
+		return normalized, nil
+	}
+	if normalized.Line <= 0 || normalized.Column <= 0 {
+		return AnyAllowlistSelector{}, fmt.Errorf(
+			"any allowlist entry %d selector line and column must both be positive when either is set",
+			index,
+		)
+	}
 	return normalized, nil
 }
 
@@ -563,13 +579,13 @@ type anyAllowlistIndex struct {
 	allowed map[FindingIdentity]struct{}
 }
 
-func buildAllowlistIndex(allowlist AnyAllowlist) anyAllowlistIndex {
+func buildAllowlistIndex(identities []FindingIdentity) anyAllowlistIndex {
 	index := anyAllowlistIndex{
-		allowed: make(map[FindingIdentity]struct{}, len(allowlist.Entries)),
+		allowed: make(map[FindingIdentity]struct{}, len(identities)),
 	}
 
-	for _, entry := range allowlist.Entries {
-		index.allowed[entry.Selector.identity()] = struct{}{}
+	for _, identity := range identities {
+		index.allowed[identity] = struct{}{}
 	}
 
 	return index
@@ -599,8 +615,9 @@ func collectParsedFileFindings(fset *token.FileSet, info *types.Info, file parse
 	findings := make([]collectedFinding, 0, len(uses))
 	for _, usage := range uses {
 		pos := fset.Position(usage.pos)
+		identity := usage.identity.withPosition(pos.Line, pos.Column)
 		findings = append(findings, collectedFinding{
-			identity:           usage.identity,
+			identity:           identity,
 			line:               pos.Line,
 			column:             pos.Column,
 			code:               lineCode(pos.Line, lines),
@@ -688,23 +705,72 @@ func sortViolations(violations []Error) {
 
 func resolveAllowlistIndex(allowlist AnyAllowlist, findings []collectedFinding) (anyAllowlistIndex, error) {
 	available := make(map[FindingIdentity]struct{}, len(findings))
+	legacyMatches := make(map[FindingIdentity][]FindingIdentity, len(findings))
 	for _, finding := range findings {
 		available[finding.identity] = struct{}{}
+		legacyKey := finding.identity.withoutPosition()
+		legacyMatches[legacyKey] = append(legacyMatches[legacyKey], finding.identity)
 	}
 
+	resolved := make([]FindingIdentity, 0, len(allowlist.Entries))
+	resolvedEntries := make(map[FindingIdentity]int, len(allowlist.Entries))
 	for i, entry := range allowlist.Entries {
-		identity := entry.Selector.identity()
-		if _, ok := available[identity]; ok {
-			continue
+		identity, err := resolveAllowlistSelector(i, *entry.Selector, available, legacyMatches)
+		if err != nil {
+			return anyAllowlistIndex{}, err
 		}
-		return anyAllowlistIndex{}, fmt.Errorf(
-			"any allowlist entry %d selector %s does not match any finding",
-			i,
+		if prev, exists := resolvedEntries[identity]; exists {
+			return anyAllowlistIndex{}, fmt.Errorf(
+				errDuplicateSelector,
+				prev,
+				i,
+				formatFindingIdentity(identity),
+			)
+		}
+		resolvedEntries[identity] = i
+		resolved = append(resolved, identity)
+	}
+
+	return buildAllowlistIndex(resolved), nil
+}
+
+func resolveAllowlistSelector(
+	index int,
+	selector AnyAllowlistSelector,
+	available map[FindingIdentity]struct{},
+	legacyMatches map[FindingIdentity][]FindingIdentity,
+) (FindingIdentity, error) {
+	identity := selector.identity()
+	if selector.hasPosition() {
+		if _, ok := available[identity]; ok {
+			return identity, nil
+		}
+		return FindingIdentity{}, fmt.Errorf(
+			errUnresolvedSelector,
+			index,
 			formatFindingIdentity(identity),
 		)
 	}
 
-	return buildAllowlistIndex(allowlist), nil
+	matches := legacyMatches[identity]
+	switch len(matches) {
+	case 0:
+		return FindingIdentity{}, fmt.Errorf(
+			errUnresolvedSelector,
+			index,
+			formatFindingIdentity(identity),
+		)
+	case 1:
+		return matches[0], nil
+	default:
+		return FindingIdentity{}, fmt.Errorf(
+			"any allowlist entry %d selector %s is ambiguous and matches %d findings: %s; add line and column",
+			index,
+			formatFindingIdentity(identity),
+			len(matches),
+			formatFindingIdentities(matches),
+		)
+	}
 }
 
 func (selector AnyAllowlistSelector) identity() FindingIdentity {
@@ -712,11 +778,31 @@ func (selector AnyAllowlistSelector) identity() FindingIdentity {
 		File:     selector.Path,
 		Owner:    selector.Owner,
 		Category: selector.Category,
+		Line:     selector.Line,
+		Column:   selector.Column,
 	}
 }
 
 func formatFindingIdentity(identity FindingIdentity) string {
+	if identity.hasPosition() {
+		return fmt.Sprintf(
+			"{path=%q owner=%q category=%q line=%d column=%d}",
+			identity.File,
+			identity.Owner,
+			identity.Category,
+			identity.Line,
+			identity.Column,
+		)
+	}
 	return fmt.Sprintf("{path=%q owner=%q category=%q}", identity.File, identity.Owner, identity.Category)
+}
+
+func formatFindingIdentities(identities []FindingIdentity) string {
+	parts := make([]string, 0, len(identities))
+	for _, identity := range identities {
+		parts = append(parts, formatFindingIdentity(identity))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func collectNolintLines(file *ast.File, fset *token.FileSet) map[int]struct{} {
@@ -941,18 +1027,40 @@ func (collector *anyUsageCollector) visitCompositeTypeAnySlot(category anyUsageC
 func (collector *anyUsageCollector) recordPredeclaredAnyUsage(category anyUsageCategory, owner string, expr ast.Expr) {
 	if ident, ok := predeclaredAnyIdent(expr, collector.info); ok {
 		collector.usages = append(collector.usages, anyUsage{
-			identity: newFindingIdentity(collector.file, owner, category),
+			identity: newFindingIdentity(collector.file, owner, category, 0, 0),
 			pos:      ident.Pos(),
 		})
 	}
 }
 
-func newFindingIdentity(relPath, owner string, category anyUsageCategory) FindingIdentity {
+func newFindingIdentity(relPath, owner string, category anyUsageCategory, line, column int) FindingIdentity {
 	return FindingIdentity{
 		File:     relPath,
 		Owner:    owner,
 		Category: string(category),
+		Line:     line,
+		Column:   column,
 	}
+}
+
+func (selector AnyAllowlistSelector) hasPosition() bool {
+	return selector.Line > 0 && selector.Column > 0
+}
+
+func (identity FindingIdentity) hasPosition() bool {
+	return identity.Line > 0 && identity.Column > 0
+}
+
+func (identity FindingIdentity) withPosition(line, column int) FindingIdentity {
+	identity.Line = line
+	identity.Column = column
+	return identity
+}
+
+func (identity FindingIdentity) withoutPosition() FindingIdentity {
+	identity.Line = 0
+	identity.Column = 0
+	return identity
 }
 
 func (collector *anyUsageCollector) inspectNode(node ast.Node, owner string) {

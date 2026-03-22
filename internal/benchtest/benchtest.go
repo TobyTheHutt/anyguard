@@ -23,6 +23,7 @@ const (
 	defaultConfiguredRoot = "./..."
 	goModFileName         = "go.mod"
 	syntheticNameFormat   = "%s_%02d"
+	syntheticAnyName      = "any"
 )
 
 const (
@@ -50,6 +51,8 @@ type Selector struct {
 	Path     string
 	Owner    string
 	Category string
+	Line     int
+	Column   int
 }
 
 type RepoStats struct {
@@ -291,6 +294,8 @@ func writeAllowlist(tb testing.TB, path string, selectors []Selector) {
 		fmt.Fprintf(&builder, "      path: %q\n", selector.Path)
 		fmt.Fprintf(&builder, "      owner: %q\n", selector.Owner)
 		fmt.Fprintf(&builder, "      category: %q\n", selector.Category)
+		fmt.Fprintf(&builder, "      line: %d\n", selector.Line)
+		fmt.Fprintf(&builder, "      column: %d\n", selector.Column)
 		builder.WriteString("    description: benchmark fixture allowlist entry\n")
 	}
 
@@ -328,13 +333,67 @@ func writeUsageFile(tb testing.TB, root, pkgName, relPath string, fileIndex int)
 	builder.WriteString("\t_ = local\n")
 	builder.WriteString("}\n")
 
-	writeFile(tb, root, relPath, builder.String())
+	content := builder.String()
+	writeFile(tb, root, relPath, content)
+
+	lines := strings.Split(content, "\n")
+	payloadLine := selectorLine(tb, lines, fmt.Sprintf("type %s map[any][]any", payloadOwner))
+	aliasLine := selectorLine(tb, lines, fmt.Sprintf("type %s = %s", aliasOwner, syntheticAnyName))
+	useFieldLine := selectorLine(tb, lines, fmt.Sprintf("func %s(%s any) {", useOwner, safeParam))
+	useCallLine := selectorLine(tb, lines, fmt.Sprintf("\t_ = %s(%s)", syntheticAnyName, safeParam))
 	return []Selector{
-		{Path: relPath, Owner: payloadOwner, Category: categoryMapTypeKey},
-		{Path: relPath, Owner: aliasOwner, Category: categoryTypeSpecType},
-		{Path: relPath, Owner: useOwner, Category: categoryFieldType},
-		{Path: relPath, Owner: useOwner, Category: categoryCallExprFun},
+		{
+			Path:     relPath,
+			Owner:    payloadOwner,
+			Category: categoryMapTypeKey,
+			Line:     payloadLine,
+			Column:   selectorColumn(tb, lines[payloadLine-1], "[any]", 1),
+		},
+		{
+			Path:     relPath,
+			Owner:    aliasOwner,
+			Category: categoryTypeSpecType,
+			Line:     aliasLine,
+			Column:   selectorColumn(tb, lines[aliasLine-1], syntheticAnyName, 0),
+		},
+		{
+			Path:     relPath,
+			Owner:    useOwner,
+			Category: categoryFieldType,
+			Line:     useFieldLine,
+			Column:   selectorColumn(tb, lines[useFieldLine-1], syntheticAnyName, 0),
+		},
+		{
+			Path:     relPath,
+			Owner:    useOwner,
+			Category: categoryCallExprFun,
+			Line:     useCallLine,
+			Column:   selectorColumn(tb, lines[useCallLine-1], "any(", 0),
+		},
 	}
+}
+
+func selectorLine(tb testing.TB, lines []string, needle string) int {
+	tb.Helper()
+
+	for i, line := range lines {
+		if line == needle {
+			return i + 1
+		}
+	}
+
+	tb.Fatalf("selector line: %q missing from generated content", needle)
+	return 0
+}
+
+func selectorColumn(tb testing.TB, line, needle string, offset int) int {
+	tb.Helper()
+
+	index := strings.Index(line, needle)
+	if index < 0 {
+		tb.Fatalf("selector column: %q missing from %q", needle, line)
+	}
+	return index + offset + 1
 }
 
 func writeSafeFile(tb testing.TB, root, pkgName, relPath string, fileIndex int) {

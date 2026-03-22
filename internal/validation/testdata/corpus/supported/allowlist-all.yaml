@@ -4,64 +4,90 @@ entries:
       path: pkg/api/supported.go
       owner: FieldTypeDisallowed
       category: "*ast.Field.Type"
+      line: 3
+      column: 28
     description: allow parameter field type
   - selector:
       path: pkg/api/supported.go
       owner: ValueSpecDisallowed
       category: "*ast.ValueSpec.Type"
+      line: 5
+      column: 25
     description: allow value spec type
   - selector:
       path: pkg/api/supported.go
       owner: TypeSpecDisallowed
       category: "*ast.TypeSpec.Type"
+      line: 7
+      column: 27
     description: allow type alias
   - selector:
       path: pkg/api/supported.go
       owner: ArrayTypeDisallowed
       category: "*ast.ArrayType.Elt"
+      line: 9
+      column: 28
     description: allow array element type
   - selector:
       path: pkg/api/supported.go
       owner: MapKeyDisallowed
       category: "*ast.MapType.Key"
+      line: 11
+      column: 27
     description: allow map key type
   - selector:
       path: pkg/api/supported.go
       owner: MapValueDisallowed
       category: "*ast.MapType.Value"
+      line: 13
+      column: 36
     description: allow map value type
   - selector:
       path: pkg/api/supported.go
       owner: ChanTypeDisallowed
       category: "*ast.ChanType.Value"
+      line: 15
+      column: 33
     description: allow channel element type
   - selector:
       path: pkg/api/supported.go
       owner: StarTypeDisallowed
       category: "*ast.StarExpr.X"
+      line: 17
+      column: 26
     description: allow pointer target type
   - selector:
       path: pkg/api/supported.go
       owner: EllipsisDisallowed
       category: "*ast.Ellipsis.Elt"
+      line: 19
+      column: 35
     description: allow variadic element type
   - selector:
       path: pkg/api/supported.go
       owner: TypeAssertDisallowed
       category: "*ast.TypeAssertExpr.Type"
+      line: 22
+      column: 13
     description: allow type assertion target
   - selector:
       path: pkg/api/supported.go
       owner: CallExprDisallowed
       category: "*ast.CallExpr.Fun"
+      line: 26
+      column: 6
     description: allow compatibility any conversion
   - selector:
       path: pkg/api/supported.go
       owner: IndexExprDisallowed
       category: "*ast.IndexExpr.Index"
+      line: 34
+      column: 13
     description: allow compatibility any single-argument instantiation
   - selector:
       path: pkg/api/supported.go
       owner: IndexListDisallowed
       category: "*ast.IndexListExpr.Indices"
+      line: 38
+      column: 15
     description: allow compatibility any multi-argument instantiation
