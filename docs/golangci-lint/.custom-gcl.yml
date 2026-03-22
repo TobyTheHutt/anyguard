@@ -4,4 +4,4 @@ name: custom-gcl
 plugins:
   - module: github.com/tobythehutt/anyguard
     import: github.com/tobythehutt/anyguard/plugin
-    version: v1.0.0
+    version: v2.0.0

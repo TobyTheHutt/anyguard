@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog, with the current development state tracked in the `Unreleased` section at the top.
 
 ## [Unreleased]
+## [2.0.0] - 2026-03-22
 
 ### Added
 
@@ -66,7 +67,8 @@ The format is based on Keep a Changelog, with the current development state trac
 
 - Initial anyguard release with YAML allowlist support, repository scanning, and CI bootstrap for enforcing controlled `any` usage. (@TobyTheHutt)
 
-[Unreleased]: https://github.com/tobythehutt/anyguard/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/tobythehutt/anyguard/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/tobythehutt/anyguard/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/tobythehutt/anyguard/compare/v0.3.0...v1.0.0
 [0.3.0]: https://github.com/tobythehutt/anyguard/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/tobythehutt/anyguard/compare/v0.1.0...v0.2.0
