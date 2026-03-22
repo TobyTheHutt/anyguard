@@ -62,6 +62,12 @@ linters:
 /usr/bin/time -f 'elapsed=%E maxrss=%MKB' bash scripts/ci/run-golangci-plugin-smoke.sh
 ```
 
+- Measure the local module-plugin benchmark path without building `custom-gcl`:
+
+```bash
+go test -bench=ModulePluginSmokePath -run=^$ ./plugin
+```
+
 ## Upstream readiness
 
 For maintainers evaluating possible core inclusion:
