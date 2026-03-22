@@ -2,6 +2,8 @@
 
 A Go analyzer and CLI that controls where `any` can be used.
 
+Release history lives in [`CHANGELOG.md`](CHANGELOG.md).
+
 ### Why
 
 `any` is useful at boundaries but unchecked usage spreads quickly and weakens type safety.  
@@ -150,11 +152,21 @@ Nested `any` is reportable only when the nested identifier still appears in one 
 - Analyzer files with no filename or no token file are skipped
 - Changing the supported slots above requires an explicit README update because this section is the public compatibility contract
 
+### Execution Model
+
+- Analyzer/plugin path: the CLI (`cmd/anyguard`), public analyzer (`anyguard.NewAnalyzer()`), and golangci-lint module plugin all run as `go/analysis` frontends. Each pass emits diagnostics only for findings in the package currently under analysis.
+- Repo-wide stale-selector validation still happens on that path. Allowlist resolution is built from repo-wide findings across the configured roots, cached once per process, and reused by later analyzer/plugin passes so stale selectors anywhere under those roots still fail closed.
+- Audit path: the repo-wide validation helper used by this repository's tests and benchmarks walks the configured roots once and returns the full repo violation set in a single call. That is the canonical whole-repo audit path.
+- Performance tradeoff: analyzer/plugin execution avoids rescanning the repo for every package pass, but it still pays one repo-wide allowlist-validation cost and, for analyzer/plugin frontends, per-package `typesinfo` loading. The audit path does one full repo walk and is the reference whole-repo measurement path.
+
 ### Development
 
 ```bash
 # Run tests
 go test ./...
+
+# Run focused execution-model contract tests
+go test ./internal/validation -run 'TestValidateAnyUsageAuditsWholeRepo|TestAnalyzerRunUsesRepoWideAllowlistValidation|TestAnalyzerRunReportsPackageLocalDiagnosticsAndReusesRepoValidation'
 
 # Run benchmarks
 go test -bench=. ./...
@@ -162,11 +174,17 @@ go test -bench=. ./...
 # Benchmark only (skip unit tests)
 go test -bench=. -run=^$ ./...
 
+# Run focused perf-sanity benchmarks
+go test -run=^$ -bench='BenchmarkAnalyzerRun|BenchmarkModulePluginSmokePath' -benchtime=1x ./internal/validation ./plugin
+
 # Run lint
 golangci-lint run
+
+# Run the golangci-lint module-plugin smoke test
+bash scripts/ci/run-golangci-plugin-smoke.sh
 ```
 
-The benchmark suite includes `ValidateAnyUsage`, repo-wide finding collection and allowlist resolution helpers, analyzer `Run` in `cold-pass` and `reused-pass` modes, and the golangci-lint module-plugin smoke path.
+The benchmark suite includes `ValidateAnyUsage`, repo-wide finding collection and allowlist resolution helpers, analyzer `Run` in `cold-pass` and `reused-pass` modes, and the golangci-lint module-plugin smoke path. The focused execution-model tests and perf-sanity benchmarks above are the maintainers' contract for package-local analyzer diagnostics plus repo-wide stale-selector validation.
 
 ### golangci-lint integration
 
@@ -178,6 +196,7 @@ The benchmark suite includes `ValidateAnyUsage`, repo-wide finding collection an
 - Plugin name in `.golangci.yml`: `anyguard`
 - Plugin diagnostics follow the same deterministic ordering contract as the CLI and public analyzer.
 - The module plugin requests golangci-lint `typesinfo` load mode so supported-slot matching can use `analysis.Pass.TypesInfo`.
+- The module plugin reports diagnostics for the current package only. Repo-wide allowlist and stale-selector validation are shared across the golangci-lint process and are not redone as a whole-repo audit for every package.
 - Integration docs and examples: `docs/golangci-lint/README.md`
 - Upstream readiness notes: `docs/golangci-lint/README.md#upstream-readiness`
 

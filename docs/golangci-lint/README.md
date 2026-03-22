@@ -51,10 +51,19 @@ linters:
 - `roots` (string or list): roots to analyze. Default is `./...`.
 - `repo-root` (string): optional repository root override for path resolution.
 
+## Execution model
+
+- Analyzer/plugin path: golangci-lint loads `anyguard` as a `go/analysis` linter and runs one pass per package. Each pass reports only the findings owned by that package.
+- Repo-wide stale-selector validation still happens in that mode. The allowlist is resolved against repo-wide findings across the configured roots once per golangci-lint process and reused by later package passes.
+- Audit path: the repo-wide validation helper used by this repository's tests and benchmarks walks the configured roots once and returns the full violation set. That is the whole-repo audit reference point; the module plugin does not repeat that work on every package.
+
 ## Load mode and performance
 
 - The module plugin requires `typesinfo` load mode.
 - This increases golangci-lint package loading cost compared with a syntax-only plugin because packages are type checked before `anyguard` runs.
+- The plugin also pays one repo-wide allowlist-validation cost per golangci-lint process so stale selectors remain fail-closed across the configured roots.
+- It does not run a whole-repo diagnostic audit on every package. Only current-package diagnostics are emitted per pass.
+- Compared with the audit path, the tradeoff is higher per-package `typesinfo` loading but no repeated repo scan for every package.
 - Finding identity, allowlist matching, and diagnostic ordering do not change.
 - Measure the repository smoke path with:
 
@@ -62,10 +71,22 @@ linters:
 /usr/bin/time -f 'elapsed=%E maxrss=%MKB' bash scripts/ci/run-golangci-plugin-smoke.sh
 ```
 
+- Run the focused execution-model contract tests with:
+
+```bash
+go test ./internal/validation -run 'TestValidateAnyUsageAuditsWholeRepo|TestAnalyzerRunUsesRepoWideAllowlistValidation|TestAnalyzerRunReportsPackageLocalDiagnosticsAndReusesRepoValidation'
+```
+
 - Measure the local module-plugin benchmark path without building `custom-gcl`:
 
 ```bash
 go test -bench=ModulePluginSmokePath -run=^$ ./plugin
+```
+
+- Run the focused analyzer/plugin perf-sanity benchmarks with:
+
+```bash
+go test -run=^$ -bench='BenchmarkAnalyzerRun|BenchmarkModulePluginSmokePath' -benchtime=1x ./internal/validation ./plugin
 ```
 
 ## Upstream readiness
@@ -75,6 +96,7 @@ For maintainers evaluating possible core inclusion:
 - The normative spec is the root [`Behavior`](../../README.md#behavior), [`Comparison With Generic Ban-Pattern Linters`](../../README.md#comparison-with-generic-ban-pattern-linters), [`Allowlist Schema`](../../README.md#allowlist-schema), and [`Detection Contract`](../../README.md#detection-contract).
 - Supported syntax categories are exactly the AST child slots in the detection contract. Every supported slot resolves the universe `any` alias. The only slots outside dedicated type positions are the three compatibility slots. Anything outside that list is out of scope and intentionally silent.
 - Each finding has one exact identity: `{path, owner, category}`. Allowlist matching is exact on that identity only.
+- Module-plugin execution is package-local for diagnostics, but stale-selector validation remains repo-wide across the configured roots and is reused across package passes in the same process.
 - The analyzer fails closed on unresolved file identity, allowlist parse/validation errors, stale or ambiguous selectors, and traversal or parse failures.
 - CLI, analyzer, and module-plugin reporting order is a compatibility guarantee: no scoring, no heuristic ranking, and stable sort order by `file`, `line`, `column`, `category`, and `owner`.
 - Ordering does not depend on configured root order, filesystem traversal order, or map iteration.

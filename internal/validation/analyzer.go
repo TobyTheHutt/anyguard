@@ -51,9 +51,15 @@ func NewAnalyzer() *analysis.Analyzer {
 }
 
 type analyzerConfig struct {
-	allowlistPath string
-	roots         string
-	repoRoot      string
+	allowlistPath      string
+	roots              string
+	repoRoot           string
+	loadRepoValidation func(
+		repoRoot string,
+		roots []string,
+		allowlist AnyAllowlist,
+		allowlistFingerprint string,
+	) (repoValidationResult, error)
 }
 
 type analyzerFile struct {
@@ -102,13 +108,25 @@ func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 
 	// collectAnalyzerFindings builds packageFindings for current-package diagnostics,
 	// while repo-wide validation is cached across analyzer passes in the same process.
-	repoResult, err := loadRepoValidationResult(repoRoot, roots, allowlist, loadedAllowlist.fingerprint)
+	repoResult, err := cfg.loadRepoValidationResult(repoRoot, roots, allowlist, loadedAllowlist.fingerprint)
 	if err != nil {
 		return nil, err
 	}
 
 	reportViolations(pass, collectAnalyzerViolations(files, packageFindings, repoResult.index))
 	return analysisResult{}, nil
+}
+
+func (cfg *analyzerConfig) loadRepoValidationResult(
+	repoRoot string,
+	roots []string,
+	allowlist AnyAllowlist,
+	allowlistFingerprint string,
+) (repoValidationResult, error) {
+	if cfg.loadRepoValidation != nil {
+		return cfg.loadRepoValidation(repoRoot, roots, allowlist, allowlistFingerprint)
+	}
+	return loadRepoValidationResult(repoRoot, roots, allowlist, allowlistFingerprint)
 }
 
 func (cfg *analyzerConfig) resolveRepoRoot(pass *analysis.Pass) (string, error) {
