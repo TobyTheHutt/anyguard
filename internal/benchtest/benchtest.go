@@ -147,29 +147,7 @@ func CopyModuleTree(tb testing.TB, srcRoot string) string {
 
 	dstRoot := tb.TempDir()
 	err := filepath.WalkDir(srcRoot, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-
-		relPath, err := filepath.Rel(srcRoot, path)
-		if err != nil {
-			return err
-		}
-		if relPath == "." {
-			return nil
-		}
-
-		dstPath := filepath.Join(dstRoot, relPath)
-		if entry.IsDir() {
-			return os.MkdirAll(dstPath, 0o750)
-		}
-
-		// #nosec G304 -- benchmark fixtures copy local repository-controlled files.
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(dstPath, data, 0o600)
+		return copyModuleTreeEntry(srcRoot, dstRoot, path, entry, walkErr)
 	})
 	if err != nil {
 		tb.Fatalf("copy module tree: %v", err)
@@ -177,6 +155,36 @@ func CopyModuleTree(tb testing.TB, srcRoot string) string {
 
 	rewriteGoDirective(tb, filepath.Join(dstRoot, goModFileName), defaultGoVersion)
 	return dstRoot
+}
+
+//nolint:gosec // Benchmark fixtures only copy repository-controlled files into t.TempDir.
+func copyModuleTreeEntry(srcRoot, dstRoot, path string, entry os.DirEntry, walkErr error) error {
+	if walkErr != nil {
+		return walkErr
+	}
+
+	relPath, relErr := filepath.Rel(srcRoot, path)
+	if relErr != nil {
+		return relErr
+	}
+	if relPath == "." {
+		return nil
+	}
+
+	if entry.IsDir() {
+		return os.MkdirAll(filepath.Join(dstRoot, relPath), 0o750)
+	}
+
+	dstPath := filepath.Join(dstRoot, relPath)
+	if mkdirErr := os.MkdirAll(filepath.Dir(dstPath), 0o750); mkdirErr != nil {
+		return mkdirErr
+	}
+
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		return readErr
+	}
+	return os.WriteFile(dstPath, data, 0o600)
 }
 
 func LoadPackageSnapshots(tb testing.TB, dir string, patterns []string) []PackageSnapshot {
@@ -246,10 +254,10 @@ func normalizeSyntheticRepoConfig(cfg SyntheticRepoConfig) SyntheticRepoConfig {
 	return cfg
 }
 
+//nolint:gosec // Benchmark fixtures rewrite the copied temporary go.mod file only.
 func rewriteGoDirective(tb testing.TB, goModPath, version string) {
 	tb.Helper()
 
-	// #nosec G304 -- benchmark fixtures rewrite a local copied go.mod file.
 	data, err := os.ReadFile(goModPath)
 	if err != nil {
 		tb.Fatalf("read go.mod: %v", err)
@@ -279,9 +287,9 @@ func writeAllowlist(tb testing.TB, path string, selectors []Selector) {
 	builder.WriteString("entries:\n")
 	for _, selector := range selectors {
 		builder.WriteString("  - selector:\n")
-		builder.WriteString(fmt.Sprintf("      path: %q\n", selector.Path))
-		builder.WriteString(fmt.Sprintf("      owner: %q\n", selector.Owner))
-		builder.WriteString(fmt.Sprintf("      category: %q\n", selector.Category))
+		fmt.Fprintf(&builder, "      path: %q\n", selector.Path)
+		fmt.Fprintf(&builder, "      owner: %q\n", selector.Owner)
+		fmt.Fprintf(&builder, "      category: %q\n", selector.Category)
 		builder.WriteString("    description: benchmark fixture allowlist entry\n")
 	}
 
@@ -304,18 +312,18 @@ func writeUsageFile(tb testing.TB, root, pkgName, relPath string, fileIndex int)
 	builder.WriteString("package ")
 	builder.WriteString(pkgName)
 	builder.WriteString("\n\n")
-	builder.WriteString(fmt.Sprintf("type %s map[any][]any\n", payloadOwner))
-	builder.WriteString(fmt.Sprintf("type %s = any\n", aliasOwner))
-	builder.WriteString(fmt.Sprintf("var %s any\n\n", valueOwner))
-	builder.WriteString(fmt.Sprintf("type %s[T any] struct{}\n", singleName))
-	builder.WriteString(fmt.Sprintf("type %s[T, U any] struct{}\n\n", pairName))
-	builder.WriteString(fmt.Sprintf("func %s(%s any) {\n", useOwner, safeParam))
+	fmt.Fprintf(&builder, "type %s map[any][]any\n", payloadOwner)
+	fmt.Fprintf(&builder, "type %s = any\n", aliasOwner)
+	fmt.Fprintf(&builder, "var %s any\n\n", valueOwner)
+	fmt.Fprintf(&builder, "type %s[T any] struct{}\n", singleName)
+	fmt.Fprintf(&builder, "type %s[T, U any] struct{}\n\n", pairName)
+	fmt.Fprintf(&builder, "func %s(%s any) {\n", useOwner, safeParam)
 	builder.WriteString("\tvar local map[string]any\n")
 	builder.WriteString("\ttype Hidden = any\n")
-	builder.WriteString(fmt.Sprintf("\t_ = any(%s)\n", safeParam))
-	builder.WriteString(fmt.Sprintf("\t_ = %s[any]{}\n", singleName))
-	builder.WriteString(fmt.Sprintf("\t_ = %s[int, any]{}\n", pairName))
-	builder.WriteString(fmt.Sprintf("\t_ = %s.(any)\n", safeParam))
+	fmt.Fprintf(&builder, "\t_ = any(%s)\n", safeParam)
+	fmt.Fprintf(&builder, "\t_ = %s[any]{}\n", singleName)
+	fmt.Fprintf(&builder, "\t_ = %s[int, any]{}\n", pairName)
+	fmt.Fprintf(&builder, "\t_ = %s.(any)\n", safeParam)
 	builder.WriteString("\t_ = local\n")
 	builder.WriteString("}\n")
 
