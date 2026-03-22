@@ -3,6 +3,7 @@ package validation
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -90,14 +91,39 @@ type AnyAllowlistEntry struct {
 	Refs        []string              `yaml:"refs,omitempty"`
 }
 
+type loadedAnyAllowlist struct {
+	allowlist   AnyAllowlist
+	fingerprint string
+}
+
 // LoadAnyAllowlist reads and validates a YAML any-usage allowlist file.
 func LoadAnyAllowlist(listPath string) (AnyAllowlist, error) {
+	loaded, err := loadAnyAllowlist(listPath)
+	if err != nil {
+		return AnyAllowlist{}, err
+	}
+	return loaded.allowlist, nil
+}
+
+func loadAnyAllowlist(listPath string) (loadedAnyAllowlist, error) {
 	// #nosec G304 -- repository tooling controls allowlist path.
 	data, err := os.ReadFile(listPath)
 	if err != nil {
-		return AnyAllowlist{}, fmt.Errorf("read any allowlist: %w", err)
+		return loadedAnyAllowlist{}, fmt.Errorf("read any allowlist: %w", err)
 	}
 
+	allowlist, err := decodeAnyAllowlist(data)
+	if err != nil {
+		return loadedAnyAllowlist{}, err
+	}
+
+	return loadedAnyAllowlist{
+		allowlist:   allowlist,
+		fingerprint: fingerprintAnyAllowlistData(data),
+	}, nil
+}
+
+func decodeAnyAllowlist(data []byte) (AnyAllowlist, error) {
 	var allowlist AnyAllowlist
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
@@ -110,6 +136,11 @@ func LoadAnyAllowlist(listPath string) (AnyAllowlist, error) {
 		return AnyAllowlist{}, validateErr
 	}
 	return allowlist, nil
+}
+
+func fingerprintAnyAllowlistData(data []byte) string {
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum[:])
 }
 
 func wrapAllowlistParseError(err error) error {

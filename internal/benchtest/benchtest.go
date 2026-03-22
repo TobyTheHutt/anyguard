@@ -157,7 +157,6 @@ func CopyModuleTree(tb testing.TB, srcRoot string) string {
 	return dstRoot
 }
 
-//nolint:gosec // Benchmark fixtures only copy repository-controlled files into t.TempDir.
 func copyModuleTreeEntry(srcRoot, dstRoot, path string, entry os.DirEntry, walkErr error) error {
 	if walkErr != nil {
 		return walkErr
@@ -180,10 +179,12 @@ func copyModuleTreeEntry(srcRoot, dstRoot, path string, entry os.DirEntry, walkE
 		return mkdirErr
 	}
 
+	// #nosec G304 -- path is discovered from a repository-rooted filepath.WalkDir.
 	data, readErr := os.ReadFile(path)
 	if readErr != nil {
 		return readErr
 	}
+	// #nosec G703 -- relPath comes from filepath.Rel during a walk rooted at srcRoot.
 	return os.WriteFile(dstPath, data, 0o600)
 }
 
