@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/importer"
 	"go/parser"
 	"go/token"
@@ -31,6 +32,9 @@ const (
 	anyTokenMarker      = "<<ANY>>"
 	anyName             = "any"
 	sourceImporterMode  = "source"
+	goosEnvVar          = "GOOS"
+	goarchEnvVar        = "GOARCH"
+	cgoEnabledEnvVar    = "CGO_ENABLED"
 )
 
 var nolintDirectiveRE = regexp.MustCompile(`(?i)\bnolint(?::([a-z0-9_,-]+))?`)
@@ -250,8 +254,9 @@ type parsedPackage struct {
 func collectParsedPackages(rootPath, baseAbs string, globs []string) (parsedPackageCollection, error) {
 	fset := token.NewFileSet()
 	grouped := make(map[parsedPackageKey]*parsedPackage)
+	buildCtx := currentBuildContext()
 
-	err := walkParsedFiles(rootPath, baseAbs, globs, fset, func(file parsedGoFile) error {
+	err := walkParsedFiles(rootPath, baseAbs, globs, fset, buildCtx, func(file parsedGoFile) error {
 		appendParsedPackageFile(grouped, file)
 		return nil
 	})
@@ -266,10 +271,11 @@ func walkParsedFiles(
 	rootPath, baseAbs string,
 	globs []string,
 	fset *token.FileSet,
+	buildCtx *build.Context,
 	visit func(parsedGoFile) error,
 ) error {
 	return filepath.WalkDir(rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
-		parsedFile, keep, err := parseRootFile(fset, path, entry, walkErr, baseAbs, globs)
+		parsedFile, keep, err := parseRootFile(fset, path, entry, walkErr, baseAbs, globs, buildCtx)
 		if err != nil {
 			return err
 		}
@@ -328,6 +334,7 @@ func parseRootFile(
 	walkErr error,
 	baseAbs string,
 	globs []string,
+	buildCtx *build.Context,
 ) (parsedGoFile, bool, error) {
 	if walkErr != nil {
 		return parsedGoFile{}, false, walkErr
@@ -342,6 +349,13 @@ func parseRootFile(
 	}
 	relPath = normalizePath(relPath)
 	if shouldExclude(relPath, globs) {
+		return parsedGoFile{}, false, nil
+	}
+	keepForBuild, err := buildCtx.MatchFile(filepath.Dir(path), filepath.Base(path))
+	if err != nil {
+		return parsedGoFile{}, false, fmt.Errorf("match build constraints for %s: %w", relPath, err)
+	}
+	if !keepForBuild {
 		return parsedGoFile{}, false, nil
 	}
 
@@ -361,6 +375,23 @@ func parseRootFile(
 		content: content,
 		syntax:  syntax,
 	}, true, nil
+}
+
+func currentBuildContext() *build.Context {
+	ctx := build.Default
+	if goos := strings.TrimSpace(os.Getenv(goosEnvVar)); goos != "" {
+		ctx.GOOS = goos
+	}
+	if goarch := strings.TrimSpace(os.Getenv(goarchEnvVar)); goarch != "" {
+		ctx.GOARCH = goarch
+	}
+	switch strings.TrimSpace(os.Getenv(cgoEnabledEnvVar)) {
+	case "0":
+		ctx.CgoEnabled = false
+	case "1":
+		ctx.CgoEnabled = true
+	}
+	return &ctx
 }
 
 func newParsedPackageKey(file parsedGoFile) parsedPackageKey {
