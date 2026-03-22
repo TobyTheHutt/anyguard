@@ -28,6 +28,10 @@ if [[ -z "${plugin_module}" ]]; then
 	echo "unable to resolve plugin module from .custom-gcl.yml" >&2
 	exit 1
 fi
+plugin_repo_module="${plugin_module}"
+if [[ "${plugin_repo_module}" =~ ^(.+)/v[0-9]+$ ]]; then
+	plugin_repo_module="${BASH_REMATCH[1]}"
+fi
 
 local_mod_dir="$(go list -m -f '{{.Dir}}' "github.com/golangci/golangci-lint/v2@${custom_version}")"
 if [[ -z "${local_mod_dir}" || ! -d "${local_mod_dir}" ]]; then
@@ -92,8 +96,8 @@ git clone --bare -q "${plugin_worktree}" "${plugin_repo}"
 export GIT_CONFIG_GLOBAL="${tmp_root}/gitconfig"
 touch "${GIT_CONFIG_GLOBAL}"
 git config --global url."file://${local_repo}".insteadOf "https://github.com/golangci/golangci-lint.git"
-git config --global url."file://${plugin_repo}".insteadOf "https://${plugin_module}.git"
-git config --global url."file://${plugin_repo}".insteadOf "https://${plugin_module}"
+git config --global url."file://${plugin_repo}".insteadOf "https://${plugin_repo_module}.git"
+git config --global url."file://${plugin_repo}".insteadOf "https://${plugin_repo_module}"
 
 append_csv_env() {
 	local key="$1"
@@ -110,6 +114,7 @@ append_csv_env() {
 	export "${key}=${current},${value}"
 }
 
+append_csv_env GOPRIVATE "${plugin_repo_module}"
 append_csv_env GOPRIVATE "${plugin_module}"
 export GOPROXY="https://proxy.golang.org,direct"
 

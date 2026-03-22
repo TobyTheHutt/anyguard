@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/tobythehutt/anyguard/internal/validation"
+	"github.com/tobythehutt/anyguard/v2/internal/validation"
 	"golang.org/x/tools/go/analysis"
 )
 
