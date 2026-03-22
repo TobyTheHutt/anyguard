@@ -85,10 +85,11 @@ func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	allowlist, err := LoadAnyAllowlist(allowlistPath)
+	loadedAllowlist, err := loadAnyAllowlist(allowlistPath)
 	if err != nil {
 		return nil, err
 	}
+	allowlist := loadedAllowlist.allowlist
 
 	files, err := collectAnalyzerFiles(pass, repoRoot, roots)
 	if err != nil {
@@ -100,18 +101,13 @@ func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 	}
 
 	// collectAnalyzerFindings builds packageFindings for current-package diagnostics,
-	// then collectFindings scans the full repo so resolveAllowlistIndex can validate
-	// stale selectors against findings before collectAnalyzerViolations reports them.
-	findings, err := collectFindings(repoRoot, roots, allowlist.ExcludeGlobs)
-	if err != nil {
-		return nil, err
-	}
-	index, err := resolveAllowlistIndex(allowlist, findings)
+	// while repo-wide validation is cached across analyzer passes in the same process.
+	repoResult, err := loadRepoValidationResult(repoRoot, roots, allowlist, loadedAllowlist.fingerprint)
 	if err != nil {
 		return nil, err
 	}
 
-	reportViolations(pass, collectAnalyzerViolations(files, packageFindings, index))
+	reportViolations(pass, collectAnalyzerViolations(files, packageFindings, repoResult.index))
 	return analysisResult{}, nil
 }
 

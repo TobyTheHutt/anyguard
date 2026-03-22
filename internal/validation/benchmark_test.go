@@ -109,10 +109,12 @@ func BenchmarkAnalyzerRun(b *testing.B) {
 		roots:         DefaultRoots,
 	}
 
+	resetProcessRepoValidationCacheForTesting()
 	preloadedSnapshot := loadRepresentativeSnapshot(b, fixture)
 	if count := benchmarkAnalyzerDiagnostics(b, cfg, preloadedSnapshot); count == 0 {
 		b.Fatal(errExpectedAnalyzerDiagnostics)
 	}
+	resetProcessRepoValidationCacheForTesting()
 
 	b.Run(fixtureName+"/cold-pass", func(b *testing.B) {
 		benchmarkAnalyzerRunCold(b, cfg, fixture)
@@ -120,6 +122,10 @@ func BenchmarkAnalyzerRun(b *testing.B) {
 
 	b.Run(fixtureName+"/reused-pass", func(b *testing.B) {
 		benchmarkAnalyzerRunReused(b, cfg, preloadedSnapshot)
+	})
+
+	b.Run(fixtureName+"/reused-pass-reset-cache", func(b *testing.B) {
+		benchmarkAnalyzerRunReusedResetCache(b, cfg, preloadedSnapshot)
 	})
 }
 
@@ -180,6 +186,7 @@ func benchmarkAnalyzerRunCold(b *testing.B, cfg *analyzerConfig, fixture benchte
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
+		resetProcessRepoValidationCacheForTesting()
 		snapshot := loadRepresentativeSnapshot(b, fixture)
 		if count := benchmarkAnalyzerDiagnostics(b, cfg, snapshot); count == 0 {
 			b.Fatal(errExpectedAnalyzerDiagnostics)
@@ -191,10 +198,47 @@ func benchmarkAnalyzerRunReused(b *testing.B, cfg *analyzerConfig, snapshot benc
 	b.Helper()
 	b.ReportAllocs()
 
+	resetProcessRepoValidationCacheForTesting()
+
 	// Reuse the same prepared pass across iterations to isolate repeated in-process
 	// analyzer execution. pass.Report is reassigned each loop before cfg.run.
 	pass := benchtest.NewPass(snapshot, NewAnalyzer(), nil)
+	warmDiagnostics := 0
+	pass.Report = func(analysis.Diagnostic) {
+		warmDiagnostics++
+	}
+	if _, err := cfg.run(pass); err != nil {
+		b.Fatalf(errBenchmarkRunAnalyzer, err)
+	}
+	if warmDiagnostics == 0 {
+		b.Fatal(errExpectedAnalyzerDiagnostics)
+	}
+
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		diagnosticCount := 0
+		pass.Report = func(analysis.Diagnostic) {
+			diagnosticCount++
+		}
+		if _, err := cfg.run(pass); err != nil {
+			b.Fatalf(errBenchmarkRunAnalyzer, err)
+		}
+		if diagnosticCount == 0 {
+			b.Fatal(errExpectedAnalyzerDiagnostics)
+		}
+	}
+}
+
+func benchmarkAnalyzerRunReusedResetCache(b *testing.B, cfg *analyzerConfig, snapshot benchtest.PackageSnapshot) {
+	b.Helper()
+	b.ReportAllocs()
+
+	// Reset the process-wide repo cache each loop to preserve an uncached baseline
+	// alongside the warm repeated-pass measurement above.
+	pass := benchtest.NewPass(snapshot, NewAnalyzer(), nil)
+	for i := 0; i < b.N; i++ {
+		resetProcessRepoValidationCacheForTesting()
+
 		diagnosticCount := 0
 		pass.Report = func(analysis.Diagnostic) {
 			diagnosticCount++
