@@ -40,6 +40,7 @@ const (
 	testOwnerAlpha             = "Alpha"
 	testOwnerBeta              = "Beta"
 	testOwnerZulu              = "Zulu"
+	testOwnerReceiver          = "Receiver"
 	testSamplePath             = "sample.go"
 	testPackageAPISource       = "package api\n"
 	testPayloadTestFile        = "payload_test.go"
@@ -52,6 +53,11 @@ const (
 	testAlphaPayloadSource     = "package alpha\ntype Payload map[any]any\n"
 	testZetaLaterPath          = "pkg/zeta/later.go"
 	testZetaLaterSource        = "package zeta\nfunc Later() { _, _ = any(1), any(2) }\n"
+	testMethodsFile            = "methods.go"
+	testMethodsPath            = "pkg/api/methods.go"
+	testReceiverMethodsSource  = "package api\n\ntype Receiver struct{}\n\nfunc (Receiver) First(v any) {}\nfunc (Receiver) Second(v any) {}\n"
+	testPayloadLine            = 2
+	testPayloadColumn          = 25
 	testExpectedNormalizeRoots = "."
 	testUnexpectedDeclUsages   = "unexpected declaration-slot usages:\ngot: %#v\nwant: %#v"
 	testUnexpectedCompUsages   = "unexpected composite-slot usages:\ngot: %#v\nwant: %#v"
@@ -114,7 +120,14 @@ func TestValidateAnyUsageFromFile(t *testing.T) {
 		Version:      anyAllowlistVersion,
 		ExcludeGlobs: []string{"**/*_test.go"},
 		Entries: []AnyAllowlistEntry{
-			allowlistEntry(testPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, testPayloadBoundaryDesc),
+			allowlistEntry(
+				testPayloadPath,
+				testOwnerPayload,
+				anyCategoryMapTypeValue,
+				testPayloadLine,
+				testPayloadColumn,
+				testPayloadBoundaryDesc,
+			),
 		},
 	}
 	allowPath := filepath.Join(base, testAllowlistFile)
@@ -149,8 +162,34 @@ func TestValidateAnyUsageDetectsViolation(t *testing.T) {
 	if violations[0].Column != 25 {
 		t.Fatalf("unexpected column: %d", violations[0].Column)
 	}
-	if got, want := violations[0].Identity, newFindingIdentity(testPayloadPath, testOwnerPayload, anyCategoryMapTypeValue); got != want {
+	if got, want := violations[0].Identity, newFindingIdentity(
+		testPayloadPath,
+		testOwnerPayload,
+		anyCategoryMapTypeValue,
+		testPayloadLine,
+		testPayloadColumn,
+	); got != want {
 		t.Fatalf("unexpected identity: got %#v want %#v", got, want)
+	}
+}
+
+func TestValidateAnyUsageSupportsUniqueLegacySelector(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, apiPath(base, testPayloadFile), testPayloadSource)
+
+	allowlist := AnyAllowlist{
+		Version: anyAllowlistVersion,
+		Entries: []AnyAllowlistEntry{
+			legacyAllowlistEntry(testPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, testPayloadBoundaryDesc),
+		},
+	}
+
+	violations, err := ValidateAnyUsage(allowlist, base, []string{testRootAPI})
+	if err != nil {
+		t.Fatalf(testValidateUsageErrFmt, err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf(testNoViolationsErrFmt, violations)
 	}
 }
 
@@ -667,7 +706,14 @@ func TestValidateAnyUsageRejectsDuplicateSelectors(t *testing.T) {
 	base := t.TempDir()
 	writeFile(t, apiPath(base, testPayloadFile), testPayloadSource)
 
-	selector := allowlistEntry(testPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, testPayloadBoundaryDesc)
+	selector := allowlistEntry(
+		testPayloadPath,
+		testOwnerPayload,
+		anyCategoryMapTypeValue,
+		testPayloadLine,
+		testPayloadColumn,
+		testPayloadBoundaryDesc,
+	)
 	allowlist := AnyAllowlist{
 		Version: anyAllowlistVersion,
 		Entries: []AnyAllowlistEntry{
@@ -692,7 +738,7 @@ func TestValidateAnyUsageRejectsUnresolvedSelector(t *testing.T) {
 	allowlist := AnyAllowlist{
 		Version: anyAllowlistVersion,
 		Entries: []AnyAllowlistEntry{
-			allowlistEntry(testPayloadPath, "Paylod", anyCategoryMapTypeValue, "typoed owner"),
+			legacyAllowlistEntry(testPayloadPath, "Paylod", anyCategoryMapTypeValue, "typoed owner"),
 		},
 	}
 
@@ -727,6 +773,96 @@ func TestValidateAnyUsageRejectsMalformedSelector(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "selector missing owner") {
 		t.Fatalf(testUnexpectedErrFmt, err)
+	}
+}
+
+func TestValidateAnyUsageRejectsHalfSpecifiedSelectorPosition(t *testing.T) {
+	base := t.TempDir()
+	writeFile(t, apiPath(base, testPayloadFile), testPayloadSource)
+
+	allowlist := AnyAllowlist{
+		Version: anyAllowlistVersion,
+		Entries: []AnyAllowlistEntry{
+			{
+				Selector: &AnyAllowlistSelector{
+					Path:     testPayloadPath,
+					Owner:    testOwnerPayload,
+					Category: string(anyCategoryMapTypeValue),
+					Line:     testPayloadLine,
+				},
+				Description: "missing selector column",
+			},
+		},
+	}
+
+	_, err := ValidateAnyUsage(allowlist, base, []string{testRootAPI})
+	if err == nil {
+		t.Fatalf("expected selector coordinate validation error")
+	}
+	if !strings.Contains(err.Error(), "line and column must both be positive") {
+		t.Fatalf(testUnexpectedErrFmt, err)
+	}
+}
+
+func TestValidateAnyUsageRejectsAmbiguousLegacySelector(t *testing.T) {
+	base := t.TempDir()
+	writeFile(
+		t,
+		apiPath(base, testMethodsFile),
+		testReceiverMethodsSource,
+	)
+
+	allowlist := AnyAllowlist{
+		Version: anyAllowlistVersion,
+		Entries: []AnyAllowlistEntry{
+			legacyAllowlistEntry(testMethodsPath, testOwnerReceiver, anyCategoryFieldType, "legacy selector should be ambiguous"),
+		},
+	}
+
+	_, err := ValidateAnyUsage(allowlist, base, []string{testRootAPI})
+	if err == nil {
+		t.Fatalf("expected ambiguous selector error")
+	}
+	if !strings.Contains(err.Error(), "is ambiguous and matches 2 findings") {
+		t.Fatalf(testUnexpectedErrFmt, err)
+	}
+	if !strings.Contains(err.Error(), "add line and column") {
+		t.Fatalf(testUnexpectedErrFmt, err)
+	}
+}
+
+func TestValidateAnyUsageAllowsExactSelectorForCollidingFindings(t *testing.T) {
+	base := t.TempDir()
+	writeFile(
+		t,
+		apiPath(base, testMethodsFile),
+		testReceiverMethodsSource,
+	)
+
+	violations, err := ValidateAnyUsage(AnyAllowlist{Version: anyAllowlistVersion}, base, []string{testRootAPI})
+	if err != nil {
+		t.Fatalf(testValidateUsageErrFmt, err)
+	}
+	if len(violations) != 2 {
+		t.Fatalf("expected two colliding findings, got %d", len(violations))
+	}
+
+	allowlist := AnyAllowlist{
+		Version: anyAllowlistVersion,
+		Entries: []AnyAllowlistEntry{
+			allowlistEntryFromIdentity(violations[0].Identity, "allow only the first receiver method parameter"),
+		},
+	}
+
+	got, err := ValidateAnyUsage(allowlist, base, []string{testRootAPI})
+	if err != nil {
+		t.Fatalf(testValidateUsageErrFmt, err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected one remaining violation, got %d", len(got))
+	}
+	if got[0].Identity != violations[1].Identity {
+		t.Fatalf("unexpected remaining violation: got %#v want %#v", got[0].Identity, violations[1].Identity)
 	}
 }
 
@@ -1363,21 +1499,20 @@ func TestSortCollectedFindingsOrdersByFileLineColumnCategoryOwnerCodeAndSuppress
 }
 
 func TestAnyAllowlistIndexMatchesStrictSelectorIdentity(t *testing.T) {
-	index := buildAllowlistIndex(AnyAllowlist{
-		Version: anyAllowlistVersion,
-		Entries: []AnyAllowlistEntry{
-			allowlistEntry(testPayloadPath, testOwnerUse, anyCategoryCallExprFun, "exact selector allow"),
-		},
-	})
+	identity := newFindingIdentity(testPayloadPath, testOwnerUse, anyCategoryCallExprFun, 4, 8)
+	index := buildAllowlistIndex([]FindingIdentity{identity})
 
-	if !index.isAllowed(newFindingIdentity(testPayloadPath, testOwnerUse, anyCategoryCallExprFun)) {
+	if !index.isAllowed(identity) {
 		t.Fatalf("expected exact selector match")
 	}
-	if index.isAllowed(newFindingIdentity(testPayloadPath, testOwnerUse, anyCategoryFieldType)) {
+	if index.isAllowed(newFindingIdentity(testPayloadPath, testOwnerUse, anyCategoryFieldType, 4, 8)) {
 		t.Fatalf("did not expect selector to match a different category")
 	}
-	if index.isAllowed(newFindingIdentity(testPayloadPath, testOwnerPayload, anyCategoryCallExprFun)) {
+	if index.isAllowed(newFindingIdentity(testPayloadPath, testOwnerPayload, anyCategoryCallExprFun, 4, 8)) {
 		t.Fatalf("did not expect selector to match a different owner")
+	}
+	if index.isAllowed(newFindingIdentity(testPayloadPath, testOwnerUse, anyCategoryCallExprFun, 4, 9)) {
+		t.Fatalf("did not expect selector to match a different position")
 	}
 }
 
@@ -1388,9 +1523,9 @@ func TestValidateAnyUsageUsesEnclosingFunctionOwnerForLocalDeclarations(t *testi
 	allowlist := AnyAllowlist{
 		Version: anyAllowlistVersion,
 		Entries: []AnyAllowlistEntry{
-			allowlistEntry(testPayloadPath, testOwnerUse, anyCategoryTypeSpecType, "allow local type alias"),
-			allowlistEntry(testPayloadPath, testOwnerUse, anyCategoryMapTypeValue, "allow local map usage"),
-			allowlistEntry(testPayloadPath, testOwnerUse, anyCategoryFieldType, "allow nested function parameter"),
+			allowlistEntry(testPayloadPath, testOwnerUse, anyCategoryTypeSpecType, 3, 16, "allow local type alias"),
+			allowlistEntry(testPayloadPath, testOwnerUse, anyCategoryMapTypeValue, 4, 23, "allow local map usage"),
+			allowlistEntry(testPayloadPath, testOwnerUse, anyCategoryFieldType, 5, 13, "allow nested function parameter"),
 		},
 	}
 
@@ -1781,7 +1916,7 @@ func testCollectedFinding(
 	suppressed bool,
 ) collectedFinding {
 	return collectedFinding{
-		identity:           newFindingIdentity(path, owner, category),
+		identity:           newFindingIdentity(path, owner, category, line, column),
 		line:               line,
 		column:             column,
 		code:               code,
@@ -1801,12 +1936,43 @@ func writeAllowlist(t *testing.T, path string, allowlist AnyAllowlist) {
 	}
 }
 
-func allowlistEntry(path, owner string, category anyUsageCategory, description string) AnyAllowlistEntry {
+func allowlistEntry(
+	path, owner string,
+	category anyUsageCategory,
+	line, column int,
+	description string,
+) AnyAllowlistEntry {
 	return AnyAllowlistEntry{
 		Selector: &AnyAllowlistSelector{
 			Path:     path,
 			Owner:    owner,
 			Category: string(category),
+			Line:     line,
+			Column:   column,
+		},
+		Description: description,
+	}
+}
+
+func legacyAllowlistEntry(path, owner string, category anyUsageCategory, description string) AnyAllowlistEntry {
+	return AnyAllowlistEntry{
+		Selector: &AnyAllowlistSelector{
+			Path:     path,
+			Owner:    owner,
+			Category: string(category),
+		},
+		Description: description,
+	}
+}
+
+func allowlistEntryFromIdentity(identity FindingIdentity, description string) AnyAllowlistEntry {
+	return AnyAllowlistEntry{
+		Selector: &AnyAllowlistSelector{
+			Path:     identity.File,
+			Owner:    identity.Owner,
+			Category: identity.Category,
+			Line:     identity.Line,
+			Column:   identity.Column,
 		},
 		Description: description,
 	}

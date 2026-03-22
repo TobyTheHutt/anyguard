@@ -55,7 +55,7 @@ linters:
 
 - Analyzer/plugin path: golangci-lint loads `anyguard` as a `go/analysis` linter and runs one pass per package. Each pass reports only the findings owned by that package after applying the configured roots and `exclude_globs` to the same canonical repository-relative file identities used by repo-wide allowlist resolution.
 - Repo-wide stale-selector validation still happens in that mode. The allowlist is resolved against repo-wide findings across the configured roots once per golangci-lint process and reused by later package passes.
-- Audit path: the repo-wide validation helper used by this repository's tests and benchmarks walks the configured roots once, applies the active Go build context (`//go:build`, `GOOS`, `GOARCH`, file suffix constraints, and `CGO_ENABLED`), and returns the full violation set. That is the whole-repo audit reference point; the module plugin does not repeat that work on every package.
+- Audit path: the repo-wide validation helper used by this repository's tests and benchmarks walks the configured roots once, applies the active Go build context (`//go:build`, `GOOS`, `GOARCH`, file suffix constraints, and `CGO_ENABLED`), and returns the full violation set. That is the whole-repo audit reference point. The module plugin does not repeat that work on every package.
 
 ## Load mode and performance
 
@@ -64,7 +64,9 @@ linters:
 - The plugin also pays one repo-wide allowlist-validation cost per golangci-lint process so stale selectors remain fail-closed across the configured roots.
 - It does not run a whole-repo diagnostic audit on every package. Only current-package diagnostics are emitted per pass.
 - Compared with the audit path, the tradeoff is higher per-package `typesinfo` loading but no repeated repo scan for every package.
-- Finding identity, allowlist matching, and diagnostic ordering do not change.
+- Module-plugin diagnostics stay sorted by `file`, `line`, `column`, `category`, and `owner`, independent of configured root order, filesystem traversal order, and map iteration.
+- Canonical finding identity and exact allowlist matching include `line` and `column` coordinates.
+- Legacy allowlist selectors that omit coordinates are accepted only when `{path, owner, category}` still resolves to exactly one current finding.
 - Measure the repository smoke path with:
 
 ```bash
@@ -95,13 +97,14 @@ For maintainers evaluating possible core inclusion:
 
 - The normative spec is the root [`Behavior`](../../README.md#behavior), [`Comparison With Generic Ban-Pattern Linters`](../../README.md#comparison-with-generic-ban-pattern-linters), [`Allowlist Schema`](../../README.md#allowlist-schema), and [`Detection Contract`](../../README.md#detection-contract).
 - Supported syntax categories are exactly the AST child slots in the detection contract. Every supported slot resolves the universe `any` alias. The only slots outside dedicated type positions are the three compatibility slots. Anything outside that list is out of scope and intentionally silent.
-- Each finding has one exact identity: `{path, owner, category}`. Allowlist matching is exact on that identity only.
+- Each finding has one exact identity: `{path, owner, category, line, column}`. Allowlist matching is exact on that identity.
+- Legacy selectors without `line` and `column` are accepted only when their `{path, owner, category}` triple still resolves to exactly one current finding.
 - Module-plugin execution is package-local for diagnostics, but stale-selector validation remains repo-wide across the configured roots and is reused across package passes in the same process.
 - The analyzer fails closed on unresolved file identity, allowlist parse/validation errors, stale or ambiguous selectors, and traversal or parse failures.
 - CLI, analyzer, and module-plugin reporting order is a compatibility guarantee: no scoring, no heuristic ranking, and stable sort order by `file`, `line`, `column`, `category`, and `owner`.
 - Ordering does not depend on configured root order, filesystem traversal order, or map iteration.
 - False positives should mostly come down to scope. There are no syntax-only slots. `*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]` remain supported compatibility slots, so cases such as `any(1)`, `Single[any]{}`, and `Box[int, any]{}` remain reportable by contract.
-- Allowlist strictness is deliberate in schema version `2`: no broad file-level or owner-only exceptions, no duplicate selectors, and no selectors that fail to resolve to a current finding.
+- Allowlist strictness is deliberate in schema version `2`: no broad file-level or owner-only exceptions, no duplicate selectors, no half-specified selector coordinates, and no selectors that fail to resolve to a current finding.
 - Non-goals: type-parameter constraints, broader unsafe-dynamic-use detection, or claims that every finding is a bug or security issue.
 - The root comparison section is the canonical answer to "why not just use an existing ban-pattern linter?": overlap exists at the policy level, but `anyguard` is specifically about exact exceptions, stale-selector rejection, and a documented syntax-slot contract.
 - Treat this as a policy linter, not a detector. It enforces repository policy over `any`. Upstream inclusion is still not guaranteed.

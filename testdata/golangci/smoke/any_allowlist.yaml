@@ -4,4 +4,6 @@ entries:
       path: pkg/ok/ok.go
       owner: Payload
       category: "*ast.MapType.Value"
+      line: 3
+      column: 25
     description: allowed boundary type for smoke tests

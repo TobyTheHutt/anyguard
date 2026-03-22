@@ -137,6 +137,8 @@ func benchmarkAllowlist(selectors []benchtest.Selector) AnyAllowlist {
 				Path:     selector.Path,
 				Owner:    selector.Owner,
 				Category: selector.Category,
+				Line:     selector.Line,
+				Column:   selector.Column,
 			},
 			Description: "benchmark fixture allowlist entry",
 		})

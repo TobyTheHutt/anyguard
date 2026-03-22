@@ -69,7 +69,7 @@ func TestRepoValidationCacheReusesNormalizedKey(t *testing.T) {
 	want := repoValidationResult{
 		index: anyAllowlistIndex{
 			allowed: map[FindingIdentity]struct{}{
-				newFindingIdentity(testPayloadPath, testOwnerPayload, anyCategoryMapTypeValue): {},
+				newFindingIdentity(testPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, testPayloadLine, testPayloadColumn): {},
 			},
 		},
 	}
@@ -112,7 +112,7 @@ func TestRepoValidationCacheConcurrentAccessCollapsesMisses(t *testing.T) {
 	want := repoValidationResult{
 		index: anyAllowlistIndex{
 			allowed: map[FindingIdentity]struct{}{
-				newFindingIdentity(testPayloadPath, testOwnerPayload, anyCategoryMapTypeValue): {},
+				newFindingIdentity(testPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, testPayloadLine, testPayloadColumn): {},
 			},
 		},
 	}
