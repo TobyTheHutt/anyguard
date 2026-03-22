@@ -97,7 +97,7 @@ func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 	}
 	allowlist := loadedAllowlist.allowlist
 
-	files, err := collectAnalyzerFiles(pass, repoRoot, roots)
+	files, err := collectAnalyzerFiles(pass, repoRoot, roots, allowlist.ExcludeGlobs)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func resolveAllowlistPath(repoRoot, configured string) (string, error) {
 	return abs, nil
 }
 
-func collectAnalyzerFiles(pass *analysis.Pass, repoRoot string, roots []string) ([]analyzerFile, error) {
+func collectAnalyzerFiles(pass *analysis.Pass, repoRoot string, roots []string, excludeGlobs []string) ([]analyzerFile, error) {
 	filteredRoots := normalizeConfiguredRoots(roots, repoRoot)
 	if len(filteredRoots) == 0 {
 		return nil, errors.New("no usable roots after normalization")
@@ -201,36 +201,56 @@ func collectAnalyzerFiles(pass *analysis.Pass, repoRoot string, roots []string) 
 
 	files := make([]analyzerFile, 0, len(pass.Files))
 	for _, file := range pass.Files {
-		pos := pass.Fset.PositionFor(file.Package, false)
-		if pos.Filename == "" {
-			continue
-		}
-
-		relPath, err := relativePath(repoRoot, pos.Filename)
+		collected, keep, err := collectAnalyzerFile(pass, file, repoRoot, filteredRoots, excludeGlobs)
 		if err != nil {
-			return nil, fmt.Errorf("compute relative path for %s: %w", pos.Filename, err)
+			return nil, err
 		}
-		if !isWithinRoots(relPath, filteredRoots) {
-			continue
+		if keep {
+			files = append(files, collected)
 		}
-
-		tokenFile := pass.Fset.File(file.Package)
-		if tokenFile == nil {
-			continue
-		}
-
-		content, err := readAnalyzerFile(pass, pos.Filename)
-		if err != nil {
-			return nil, fmt.Errorf("read analyzer file %s: %w", pos.Filename, err)
-		}
-		files = append(files, analyzerFile{
-			content:   content,
-			relPath:   relPath,
-			syntax:    file,
-			tokenFile: tokenFile,
-		})
 	}
 	return files, nil
+}
+
+func collectAnalyzerFile(
+	pass *analysis.Pass,
+	file *ast.File,
+	repoRoot string,
+	roots []string,
+	excludeGlobs []string,
+) (analyzerFile, bool, error) {
+	pos := pass.Fset.PositionFor(file.Package, false)
+	if pos.Filename == "" {
+		return analyzerFile{}, false, nil
+	}
+
+	relPath, err := relativePath(repoRoot, pos.Filename)
+	if err != nil {
+		return analyzerFile{}, false, fmt.Errorf("compute relative path for %s: %w", pos.Filename, err)
+	}
+	if !shouldCollectAnalyzerPath(relPath, roots, excludeGlobs) {
+		return analyzerFile{}, false, nil
+	}
+
+	tokenFile := pass.Fset.File(file.Package)
+	if tokenFile == nil {
+		return analyzerFile{}, false, nil
+	}
+
+	content, err := readAnalyzerFile(pass, pos.Filename)
+	if err != nil {
+		return analyzerFile{}, false, fmt.Errorf("read analyzer file %s: %w", pos.Filename, err)
+	}
+	return analyzerFile{
+		content:   content,
+		relPath:   relPath,
+		syntax:    file,
+		tokenFile: tokenFile,
+	}, true, nil
+}
+
+func shouldCollectAnalyzerPath(relPath string, roots []string, excludeGlobs []string) bool {
+	return isWithinRoots(relPath, roots) && !shouldExclude(relPath, excludeGlobs)
 }
 
 func readAnalyzerFile(pass *analysis.Pass, filename string) ([]byte, error) {
