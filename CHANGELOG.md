@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, with the current development state trac
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-03-22
+
 ### Fixed
 
 - Tightened canonical finding identity with exact `line` and `column` coordinates so one allowlist entry can no longer silently suppress multiple same-file, same-owner, same-category findings. Legacy three-field selectors now resolve only when unique and otherwise fail closed as ambiguous. (@TobyTheHutt)
@@ -75,7 +77,8 @@ The format is based on Keep a Changelog, with the current development state trac
 
 - Initial anyguard release with YAML allowlist support, repository scanning, and CI bootstrap for enforcing controlled `any` usage. (@TobyTheHutt)
 
-[Unreleased]: https://github.com/tobythehutt/anyguard/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/tobythehutt/anyguard/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/tobythehutt/anyguard/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/tobythehutt/anyguard/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/tobythehutt/anyguard/compare/v0.3.0...v1.0.0
 [0.3.0]: https://github.com/tobythehutt/anyguard/compare/v0.2.0...v0.3.0

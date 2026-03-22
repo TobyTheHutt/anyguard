@@ -117,6 +117,6 @@ For maintainers evaluating possible core inclusion:
 
 ## Release and version pinning
 
-- Keep `plugins[].version` pinned to the tag being released, for example `v2.0.0`.
+- Keep `plugins[].version` pinned to the tag being released, for example `v2.0.1`.
 - Module plugin support starts with `v1.0.0`. Do not pin below this version.
 - The plugin entrypoint import path `github.com/tobythehutt/anyguard/plugin` is stable and versioned with module tags.
