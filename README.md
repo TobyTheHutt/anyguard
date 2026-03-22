@@ -156,9 +156,17 @@ Nested `any` is reportable only when the nested identifier still appears in one 
 # Run tests
 go test ./...
 
+# Run benchmarks
+go test -bench=. ./...
+
+# Benchmark only (skip unit tests)
+go test -bench=. -run=^$ ./...
+
 # Run lint
 golangci-lint run
 ```
+
+The benchmark suite includes `ValidateAnyUsage`, repo-wide finding collection and allowlist resolution helpers, analyzer `Run` in `cold-pass` and `reused-pass` modes, and the golangci-lint module-plugin smoke path.
 
 ### golangci-lint integration
 

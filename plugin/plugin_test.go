@@ -8,13 +8,15 @@ import (
 )
 
 const (
-	errNewPlugin      = "new plugin: %v"
-	flagAllowlist     = "allowlist"
-	flagRepoRoot      = "repo-root"
-	flagRoots         = "roots"
-	valueAnyAllowlist = "ci/allowlist.yaml"
-	valueRepoRoot     = "/repo/root"
-	valueRoots        = "./...,pkg/api"
+	errNewPlugin           = "new plugin: %v"
+	errBuildAnalyzers      = "build analyzers: %v"
+	errExpectedOneAnalyzer = "expected one analyzer, got %d"
+	flagAllowlist          = "allowlist"
+	flagRepoRoot           = "repo-root"
+	flagRoots              = "roots"
+	valueAnyAllowlist      = "ci/allowlist.yaml"
+	valueRepoRoot          = "/repo/root"
+	valueRoots             = "./...,pkg/api"
 )
 
 func TestInitRegistersPlugin(t *testing.T) {
@@ -51,10 +53,10 @@ func TestModulePluginBuildAnalyzers(t *testing.T) {
 
 	analyzers, err := pluginInstance.BuildAnalyzers()
 	if err != nil {
-		t.Fatalf("build analyzers: %v", err)
+		t.Fatalf(errBuildAnalyzers, err)
 	}
 	if len(analyzers) != 1 {
-		t.Fatalf("expected one analyzer, got %d", len(analyzers))
+		t.Fatalf(errExpectedOneAnalyzer, len(analyzers))
 	}
 
 	analyzer := analyzers[0]
