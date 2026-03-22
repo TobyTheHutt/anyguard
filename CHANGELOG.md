@@ -9,6 +9,7 @@ The format is based on Keep a Changelog, with the current development state trac
 ### Fixed
 
 - Aligned repo-wide audit file discovery with the active Go build context so inactive `//go:build`, `GOOS`, `GOARCH`, file-suffixed, and cgo-gated files no longer create stale-selector or violation mismatches versus analyzer and plugin runs. (@TobyTheHutt)
+- Honored `exclude_globs` on the analyzer, CLI, and golangci-lint package-local diagnostic path so those frontends now use the same repository-relative file set as repo-wide allowlist resolution. (@TobyTheHutt)
 
 ## [2.0.0] - 2026-03-22
 

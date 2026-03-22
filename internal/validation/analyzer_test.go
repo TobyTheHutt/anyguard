@@ -18,8 +18,10 @@ const (
 	testdataSrcDir     = "src"
 	testAllowlistPath  = "allowlist.yaml"
 	testAllowlistEmpty = "allowlist-empty.yaml"
+	testAllowlistExcl  = "allowlist-excluded.yaml"
 	testPkgViolations  = "violations"
 	testPkgAllowed     = "allowed"
+	testPkgExcluded    = "generated"
 	testPkgFiltered    = "filtered"
 	testPkgDir         = "pkg"
 	testNilPkgPath     = "pkg/nilpkg.go"
@@ -58,6 +60,18 @@ func TestAnalyzerRespectsRoots(t *testing.T) {
 	analysistest.Run(t, testdata, analyzer, testPkgFiltered)
 }
 
+func TestAnalyzerHonorsExcludeGlobs(t *testing.T) {
+	analyzer := NewAnalyzer()
+	testdata := analysistest.TestData()
+	repoRoot := filepath.Join(testdata, testdataSrcDir)
+
+	setAnalyzerFlag(t, analyzer, flagAllowlist, filepath.Join(testdata, testAllowlistExcl))
+	setAnalyzerFlag(t, analyzer, flagRepoRoot, repoRoot)
+	setAnalyzerFlag(t, analyzer, flagRoots, DefaultRoots)
+
+	analysistest.Run(t, testdata, analyzer, testPkgExcluded)
+}
+
 func TestNewAnalyzerRunsDespiteErrors(t *testing.T) {
 	analyzer := NewAnalyzer()
 	if !analyzer.RunDespiteErrors {
@@ -86,7 +100,7 @@ func TestCollectAnalyzerFilesWithNilPackage(t *testing.T) {
 		Files: []*ast.File{parsed},
 	}
 
-	files, err := collectAnalyzerFiles(pass, base, []string{DefaultRoots})
+	files, err := collectAnalyzerFiles(pass, base, []string{DefaultRoots}, nil)
 	if err != nil {
 		t.Fatalf(testCollectFiles, err)
 	}
@@ -119,7 +133,7 @@ func TestCollectAnalyzerFilesUsesPassReadFile(t *testing.T) {
 		},
 	}
 
-	files, err := collectAnalyzerFiles(pass, base, []string{DefaultRoots})
+	files, err := collectAnalyzerFiles(pass, base, []string{DefaultRoots}, nil)
 	if err != nil {
 		t.Fatalf(testCollectFiles, err)
 	}
@@ -157,7 +171,7 @@ func TestCollectAnalyzerFindingsUsesPassTypesInfo(t *testing.T) {
 		TypesInfo: typeCheckTestFile(fset, parsed),
 	}
 
-	files, err := collectAnalyzerFiles(pass, base, []string{DefaultRoots})
+	files, err := collectAnalyzerFiles(pass, base, []string{DefaultRoots}, nil)
 	if err != nil {
 		t.Fatalf(testCollectFiles, err)
 	}
@@ -192,7 +206,7 @@ func TestCollectAnalyzerFindingsRequiresTypesInfo(t *testing.T) {
 		Files: []*ast.File{parsed},
 	}
 
-	files, err := collectAnalyzerFiles(pass, base, []string{DefaultRoots})
+	files, err := collectAnalyzerFiles(pass, base, []string{DefaultRoots}, nil)
 	if err != nil {
 		t.Fatalf(testCollectFiles, err)
 	}
@@ -203,6 +217,36 @@ func TestCollectAnalyzerFindingsRequiresTypesInfo(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), errMissingTypesInfo) {
 		t.Fatalf(testUnexpectedErr, err)
+	}
+}
+
+func TestCollectAnalyzerFilesHonorsExcludeGlobs(t *testing.T) {
+	base := t.TempDir()
+	sourcePath := filepath.Join(base, testPkgDir, "generated", "payload.go")
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o750); err != nil {
+		t.Fatalf(testCreateSource, err)
+	}
+	if err := os.WriteFile(sourcePath, []byte(testAnalyzerSrc), 0o600); err != nil {
+		t.Fatalf(testWriteSource, err)
+	}
+
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, sourcePath, nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf(testParseSource, err)
+	}
+
+	pass := &analysis.Pass{
+		Fset:  fset,
+		Files: []*ast.File{parsed},
+	}
+
+	files, err := collectAnalyzerFiles(pass, base, []string{DefaultRoots}, []string{"pkg/generated/**"})
+	if err != nil {
+		t.Fatalf(testCollectFiles, err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("expected excluded analyzer file set to stay empty, got %d files", len(files))
 	}
 }
 
@@ -306,7 +350,7 @@ func TestCollectAnalyzerFilesRejectsAmbiguousIdentity(t *testing.T) {
 		Files: []*ast.File{parsed},
 	}
 
-	_, err = collectAnalyzerFiles(pass, repoRoot, []string{DefaultRoots})
+	_, err = collectAnalyzerFiles(pass, repoRoot, []string{DefaultRoots}, nil)
 	if err == nil {
 		t.Fatalf("expected canonical path resolution error")
 	}
