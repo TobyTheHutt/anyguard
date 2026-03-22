@@ -12,6 +12,7 @@ Release history lives in [`CHANGELOG.md`](CHANGELOG.md).
 ### Get Started
 
 ```bash
+go install github.com/tobythehutt/anyguard/v2/cmd/anyguard@latest
 anyguard -allowlist internal/ci/any_allowlist.yaml ./...
 ```
 
@@ -200,7 +201,7 @@ The benchmark suite includes `ValidateAnyUsage`, repo-wide finding collection an
 
 `anyguard` can run as a golangci-lint module plugin.
 
-- Stable plugin import path: `github.com/tobythehutt/anyguard/plugin`
+- Stable plugin import path: `github.com/tobythehutt/anyguard/v2/plugin`
 - Plugin name in `.golangci.yml`: `anyguard`
 - Plugin diagnostics follow the same deterministic ordering contract as the CLI and public analyzer.
 - The module plugin requests golangci-lint `typesinfo` load mode so supported-slot matching can use `analysis.Pass.TypesInfo`.
@@ -212,10 +213,18 @@ The benchmark suite includes `ValidateAnyUsage`, repo-wide finding collection an
 
 For direct integration into `golangci-lint`, import the public analyzer entrypoint.
 
-- Module path: `github.com/tobythehutt/anyguard`
+- Module path: `github.com/tobythehutt/anyguard/v2`
 - Analyzer constructor: `anyguard.NewAnalyzer()`
 - The analyzer uses `analysis.Pass.TypesInfo` and runs despite errors so partial type info is still available on ill-typed packages.
 - Analyzer diagnostics follow the same deterministic ordering contract as the CLI and module plugin.
+
+```go
+import anyguard "github.com/tobythehutt/anyguard/v2"
+```
+
+```bash
+go get github.com/tobythehutt/anyguard/v2@v2.0.2
+```
 
 ### License
 

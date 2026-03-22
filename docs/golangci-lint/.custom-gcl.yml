@@ -2,6 +2,6 @@
 version: v2.7.2
 name: custom-gcl
 plugins:
-  - module: github.com/tobythehutt/anyguard
-    import: github.com/tobythehutt/anyguard/plugin
-    version: v2.0.1
+  - module: github.com/tobythehutt/anyguard/v2
+    import: github.com/tobythehutt/anyguard/v2/plugin
+    version: v2.0.2

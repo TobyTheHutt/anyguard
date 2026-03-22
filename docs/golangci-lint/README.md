@@ -2,8 +2,8 @@
 
 ## Stable plugin entrypoint
 
-- Module path: `github.com/tobythehutt/anyguard`
-- Plugin import path: `github.com/tobythehutt/anyguard/plugin`
+- Module path: `github.com/tobythehutt/anyguard/v2`
+- Plugin import path: `github.com/tobythehutt/anyguard/v2/plugin`
 - Linter name in `.golangci.yml`: `anyguard`
 - Module-plugin diagnostics follow the same deterministic ordering compatibility guarantee as the CLI and public analyzer.
 - The plugin uses the same AST-slot-driven contract as the CLI and public analyzer.
@@ -21,6 +21,7 @@ golangci-lint custom
 ```
 
 This creates `./custom-gcl` by default.
+The checked-in [`docs/golangci-lint/.custom-gcl.yml`](.custom-gcl.yml) example uses the versioned `v2` module and plugin import paths.
 
 ## Enable the linter in `.golangci.yml`
 
@@ -117,6 +118,6 @@ For maintainers evaluating possible core inclusion:
 
 ## Release and version pinning
 
-- Keep `plugins[].version` pinned to the tag being released, for example `v2.0.1`.
+- Keep `plugins[].version` pinned to the tag being released, for example `v2.0.2`.
 - Module plugin support starts with `v1.0.0`. Do not pin below this version.
-- The plugin entrypoint import path `github.com/tobythehutt/anyguard/plugin` is stable and versioned with module tags.
+- The plugin entrypoint import path `github.com/tobythehutt/anyguard/v2/plugin` is stable and versioned with module tags.

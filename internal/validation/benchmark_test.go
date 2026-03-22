@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/tobythehutt/anyguard/internal/benchtest"
+	"github.com/tobythehutt/anyguard/v2/internal/benchtest"
 	"golang.org/x/tools/go/analysis"
 )
 
