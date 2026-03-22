@@ -55,7 +55,7 @@ linters:
 
 - Analyzer/plugin path: golangci-lint loads `anyguard` as a `go/analysis` linter and runs one pass per package. Each pass reports only the findings owned by that package.
 - Repo-wide stale-selector validation still happens in that mode. The allowlist is resolved against repo-wide findings across the configured roots once per golangci-lint process and reused by later package passes.
-- Audit path: the repo-wide validation helper used by this repository's tests and benchmarks walks the configured roots once and returns the full violation set. That is the whole-repo audit reference point; the module plugin does not repeat that work on every package.
+- Audit path: the repo-wide validation helper used by this repository's tests and benchmarks walks the configured roots once, applies the active Go build context (`//go:build`, `GOOS`, `GOARCH`, file suffix constraints, and `CGO_ENABLED`), and returns the full violation set. That is the whole-repo audit reference point; the module plugin does not repeat that work on every package.
 
 ## Load mode and performance
 

@@ -156,7 +156,7 @@ Nested `any` is reportable only when the nested identifier still appears in one 
 
 - Analyzer/plugin path: the CLI (`cmd/anyguard`), public analyzer (`anyguard.NewAnalyzer()`), and golangci-lint module plugin all run as `go/analysis` frontends. Each pass emits diagnostics only for findings in the package currently under analysis.
 - Repo-wide stale-selector validation still happens on that path. Allowlist resolution is built from repo-wide findings across the configured roots, cached once per process, and reused by later analyzer/plugin passes so stale selectors anywhere under those roots still fail closed.
-- Audit path: the repo-wide validation helper used by this repository's tests and benchmarks walks the configured roots once and returns the full repo violation set in a single call. That is the canonical whole-repo audit path.
+- Audit path: the repo-wide validation helper used by this repository's tests and benchmarks walks the configured roots once, applies the active Go build context (`//go:build`, `GOOS`, `GOARCH`, file suffix constraints, and `CGO_ENABLED`), and returns the full repo violation set in a single call. That is the canonical whole-repo audit path.
 - Performance tradeoff: analyzer/plugin execution avoids rescanning the repo for every package pass, but it still pays one repo-wide allowlist-validation cost and, for analyzer/plugin frontends, per-package `typesinfo` loading. The audit path does one full repo walk and is the reference whole-repo measurement path.
 
 ### Development

@@ -2,6 +2,7 @@ package validation
 
 import (
 	"go/ast"
+	"go/build"
 	"go/importer"
 	"go/parser"
 	"go/token"
@@ -21,6 +22,10 @@ const (
 	testDirAPI                 = "api"
 	testRootAPI                = "pkg/api"
 	testPayloadPath            = "pkg/api/payload.go"
+	testLinuxOKFile            = "linux_ok.go"
+	testPayloadWindowsFile     = "payload_windows.go"
+	testPayloadAMD64File       = "payload_amd64.go"
+	testSafeSource             = "package api\ntype Safe struct{ Value string }\n"
 	testPayloadFile            = "payload.go"
 	testAllowlistFile          = "allowlist.yaml"
 	testPayloadBoundaryDesc    = "payload boundary"
@@ -50,6 +55,10 @@ const (
 	testExpectedNormalizeRoots = "."
 	testUnexpectedDeclUsages   = "unexpected declaration-slot usages:\ngot: %#v\nwant: %#v"
 	testUnexpectedCompUsages   = "unexpected composite-slot usages:\ngot: %#v\nwant: %#v"
+	testGOOSLinux              = "linux"
+	testGOOSWindows            = "windows"
+	testGOARCHAMD64            = "amd64"
+	testGOARCHARM64            = "arm64"
 )
 
 func TestLoadAnyAllowlistErrors(t *testing.T) {
@@ -198,6 +207,49 @@ func TestValidateAnyUsageHandlesExcludesAndRoots(t *testing.T) {
 	if violations[0].File != testPayloadPath {
 		t.Fatalf("unexpected file in violation: %q", violations[0].File)
 	}
+}
+
+func TestValidateAnyUsageSkipsInactiveBuildTaggedFiles(t *testing.T) {
+	base := t.TempDir()
+	windowsOnlyPath := normalizePath(filepath.Join(testRootAPI, "windows_only.go"))
+
+	writeFile(t, apiPath(base, testLinuxOKFile), testSafeSource)
+	writeFile(t, filepath.Join(base, windowsOnlyPath), "//go:build windows\n\npackage api\n\ntype Payload map[string]any\n")
+
+	assertBuildContextViolations(t, base, buildEnv{goos: testGOOSLinux, goarch: testGOARCHAMD64}, nil)
+
+	want := []violationSummary{
+		{file: windowsOnlyPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeValue), line: 5, column: 25},
+	}
+	assertBuildContextViolations(t, base, buildEnv{goos: testGOOSWindows, goarch: testGOARCHAMD64}, want)
+}
+
+func TestValidateAnyUsageSkipsInactiveGOOSFiles(t *testing.T) {
+	base := t.TempDir()
+	windowsPath := normalizePath(filepath.Join(testRootAPI, testPayloadWindowsFile))
+
+	writeFile(t, apiPath(base, testLinuxOKFile), testSafeSource)
+	writeFile(t, filepath.Join(base, windowsPath), testPayloadSource)
+
+	want := []violationSummary{
+		{file: windowsPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeValue), line: 2, column: 25},
+	}
+	assertBuildContextViolations(t, base, buildEnv{goos: testGOOSLinux, goarch: testGOARCHAMD64}, nil)
+	assertBuildContextViolations(t, base, buildEnv{goos: testGOOSWindows, goarch: testGOARCHAMD64}, want)
+}
+
+func TestValidateAnyUsageSkipsInactiveGOARCHFiles(t *testing.T) {
+	base := t.TempDir()
+	amd64Path := normalizePath(filepath.Join(testRootAPI, testPayloadAMD64File))
+
+	writeFile(t, apiPath(base, "safe.go"), testSafeSource)
+	writeFile(t, filepath.Join(base, amd64Path), testPayloadSource)
+
+	want := []violationSummary{
+		{file: amd64Path, owner: testOwnerPayload, category: string(anyCategoryMapTypeValue), line: 2, column: 25},
+	}
+	assertBuildContextViolations(t, base, buildEnv{goos: testGOOSLinux, goarch: testGOARCHARM64}, nil)
+	assertBuildContextViolations(t, base, buildEnv{goos: testGOOSLinux, goarch: testGOARCHAMD64}, want)
 }
 
 func TestValidateAnyUsageAllowsTypeParamConstraint(t *testing.T) {
@@ -1394,7 +1446,7 @@ func TestParseRootFileSkipsDirectory(t *testing.T) {
 	fset := token.NewFileSet()
 	entry := dirEntryFromPath(t, base)
 
-	_, keep, err := parseRootFile(fset, base, entry, nil, base, nil)
+	_, keep, err := parseRootFile(fset, base, entry, nil, base, nil, currentBuildContext())
 	if err != nil {
 		t.Fatalf("parse directory: %v", err)
 	}
@@ -1410,12 +1462,28 @@ func TestParseRootFileSkipsExcludedFile(t *testing.T) {
 	writeFile(t, path, testPackageAPISource)
 	entry := dirEntryFromPath(t, path)
 
-	_, keep, err := parseRootFile(fset, path, entry, nil, base, []string{"**/*_test.go"})
+	_, keep, err := parseRootFile(fset, path, entry, nil, base, []string{"**/*_test.go"}, currentBuildContext())
 	if err != nil {
 		t.Fatalf("parse excluded file: %v", err)
 	}
 	if keep {
 		t.Fatalf("expected excluded file to be skipped")
+	}
+}
+
+func TestParseRootFileSkipsInactiveBuildConstrainedFile(t *testing.T) {
+	base := t.TempDir()
+	fset := token.NewFileSet()
+	path := filepath.Join(base, testRootAPI, "payload_windows.go")
+	writeFile(t, path, testPayloadSource)
+	entry := dirEntryFromPath(t, path)
+
+	_, keep, err := parseRootFile(fset, path, entry, nil, base, nil, testBuildContext("linux", "amd64"))
+	if err != nil {
+		t.Fatalf("parse inactive build-constrained file: %v", err)
+	}
+	if keep {
+		t.Fatalf("expected inactive build-constrained file to be skipped")
 	}
 }
 
@@ -1426,7 +1494,7 @@ func TestParseRootFileReportsParseErrors(t *testing.T) {
 	writeFile(t, path, testBrokenGoSource)
 	entry := dirEntryFromPath(t, path)
 
-	_, keep, err := parseRootFile(fset, path, entry, nil, base, nil)
+	_, keep, err := parseRootFile(fset, path, entry, nil, base, nil, currentBuildContext())
 	if err == nil {
 		t.Fatal(testExpectedParseError)
 	}
@@ -1442,7 +1510,7 @@ func TestParseRootFileReturnsParsedGoFile(t *testing.T) {
 	writeFile(t, path, testPayloadSource)
 	entry := dirEntryFromPath(t, path)
 
-	parsed, keep, err := parseRootFile(fset, path, entry, nil, base, nil)
+	parsed, keep, err := parseRootFile(fset, path, entry, nil, base, nil, currentBuildContext())
 	if err != nil {
 		t.Fatalf(testParseFileErrFmt, err)
 	}
@@ -1586,6 +1654,12 @@ type usageSummary struct {
 	category anyUsageCategory
 	owner    string
 	line     int
+}
+
+type buildEnv struct {
+	goos       string
+	goarch     string
+	cgoEnabled string
 }
 
 type violationSummary struct {
@@ -1750,4 +1824,75 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
+}
+
+func assertBuildContextViolations(t *testing.T, base string, env buildEnv, want []violationSummary) {
+	t.Helper()
+
+	applyBuildEnv(t, env)
+
+	violations, err := ValidateAnyUsage(AnyAllowlist{Version: anyAllowlistVersion}, base, []string{testRootAPI})
+	if err != nil {
+		t.Fatalf(testValidateUsageErrFmt, err)
+	}
+	got := collectViolationSummaries(violations)
+	if want == nil {
+		want = []violationSummary{}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected build-context violations for GOOS=%q GOARCH=%q:\ngot: %#v\nwant: %#v", env.goos, env.goarch, got, want)
+	}
+}
+
+func TestCurrentBuildContextRespectsCGOEnabledEnv(t *testing.T) {
+	testCases := []struct {
+		name string
+		env  buildEnv
+		want bool
+	}{
+		{
+			name: "default",
+			env:  buildEnv{},
+			want: build.Default.CgoEnabled,
+		},
+		{
+			name: "disabled",
+			env:  buildEnv{cgoEnabled: "0"},
+			want: false,
+		},
+		{
+			name: "enabled",
+			env:  buildEnv{cgoEnabled: "1"},
+			want: true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			applyBuildEnv(t, testCase.env)
+
+			if got := currentBuildContext().CgoEnabled; got != testCase.want {
+				t.Fatalf("unexpected cgo enabled state: got %t want %t", got, testCase.want)
+			}
+		})
+	}
+}
+
+func applyBuildEnv(t *testing.T, env buildEnv) {
+	t.Helper()
+
+	t.Setenv(goosEnvVar, env.goos)
+	t.Setenv(goarchEnvVar, env.goarch)
+	t.Setenv(cgoEnabledEnvVar, env.cgoEnabled)
+}
+
+func testBuildContext(goos, goarch string) *build.Context {
+	ctx := build.Default
+	if goos != "" {
+		ctx.GOOS = goos
+	}
+	if goarch != "" {
+		ctx.GOARCH = goarch
+	}
+	return &ctx
 }

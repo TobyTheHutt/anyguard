@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog, with the current development state tracked in the `Unreleased` section at the top.
 
 ## [Unreleased]
+
+### Fixed
+
+- Aligned repo-wide audit file discovery with the active Go build context so inactive `//go:build`, `GOOS`, `GOARCH`, file-suffixed, and cgo-gated files no longer create stale-selector or violation mismatches versus analyzer and plugin runs. (@TobyTheHutt)
+
 ## [2.0.0] - 2026-03-22
 
 ### Added
