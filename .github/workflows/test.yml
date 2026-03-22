@@ -50,7 +50,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.7.2
 
   golangci-module-plugin-smoke:
     name: Golangci Module Plugin Smoke
