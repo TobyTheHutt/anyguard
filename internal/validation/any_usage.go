@@ -32,9 +32,11 @@ const (
 	anyTokenMarker        = "<<ANY>>"
 	anyName               = "any"
 	sourceImporterMode    = "source"
+	goflagsEnvVar         = "GOFLAGS"
 	goosEnvVar            = "GOOS"
 	goarchEnvVar          = "GOARCH"
 	cgoEnabledEnvVar      = "CGO_ENABLED"
+	logAttrError          = "error"
 	errDuplicateSelector  = "any allowlist entries %d and %d resolve to the same selector %s"
 	errUnresolvedSelector = "any allowlist entry %d selector %s does not match any finding"
 )
@@ -199,6 +201,14 @@ func ValidateAnyUsage(allowlist AnyAllowlist, baseDir string, roots []string) ([
 }
 
 func collectFindings(baseAbs string, roots, globs []string) ([]collectedFinding, error) {
+	return collectFindingsWithBuildContext(baseAbs, roots, globs, currentBuildContext())
+}
+
+func collectFindingsWithBuildContext(baseAbs string, roots, globs []string, buildCtx *build.Context) ([]collectedFinding, error) {
+	if buildCtx == nil {
+		buildCtx = currentBuildContext()
+	}
+
 	findings := make([]collectedFinding, 0)
 	for _, root := range roots {
 		rootPath, skipRoot, rootErr := resolveRootPath(baseAbs, root)
@@ -209,7 +219,7 @@ func collectFindings(baseAbs string, roots, globs []string) ([]collectedFinding,
 			continue
 		}
 
-		rootFindings, err := collectRootFindings(rootPath, baseAbs, globs)
+		rootFindings, err := collectRootFindings(rootPath, baseAbs, globs, buildCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -219,8 +229,8 @@ func collectFindings(baseAbs string, roots, globs []string) ([]collectedFinding,
 	return findings, nil
 }
 
-func collectRootFindings(rootPath, baseAbs string, globs []string) ([]collectedFinding, error) {
-	parsed, err := collectParsedPackages(rootPath, baseAbs, globs)
+func collectRootFindings(rootPath, baseAbs string, globs []string, buildCtx *build.Context) ([]collectedFinding, error) {
+	parsed, err := collectParsedPackages(rootPath, baseAbs, globs, buildCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -258,10 +268,16 @@ type parsedPackage struct {
 	files []parsedGoFile
 }
 
-func collectParsedPackages(rootPath, baseAbs string, globs []string) (parsedPackageCollection, error) {
+func collectParsedPackages(
+	rootPath, baseAbs string,
+	globs []string,
+	buildCtx *build.Context,
+) (parsedPackageCollection, error) {
 	fset := token.NewFileSet()
 	grouped := make(map[parsedPackageKey]*parsedPackage)
-	buildCtx := currentBuildContext()
+	if buildCtx == nil {
+		buildCtx = currentBuildContext()
+	}
 
 	err := walkParsedFiles(rootPath, baseAbs, globs, fset, buildCtx, func(file parsedGoFile) error {
 		appendParsedPackageFile(grouped, file)
@@ -398,7 +414,143 @@ func currentBuildContext() *build.Context {
 	case "1":
 		ctx.CgoEnabled = true
 	}
+	ctx.BuildTags = buildTagsFromGOFLAGS(os.Getenv(goflagsEnvVar))
 	return &ctx
+}
+
+func buildContextCacheKey(buildCtx *build.Context) string {
+	if buildCtx == nil {
+		return ""
+	}
+
+	tags := append([]string(nil), buildCtx.BuildTags...)
+	sort.Strings(tags)
+
+	cgoEnabled := "0"
+	if buildCtx.CgoEnabled {
+		cgoEnabled = "1"
+	}
+
+	return strings.Join([]string{
+		strings.TrimSpace(buildCtx.GOOS),
+		strings.TrimSpace(buildCtx.GOARCH),
+		cgoEnabled,
+		strings.Join(tags, ","),
+	}, "\n")
+}
+
+// GOFLAGS uses quoted field splitting, and -tags values use the same parsing
+// rules as the go command's build tags flag.
+func buildTagsFromGOFLAGS(raw string) []string {
+	flags, err := splitQuotedFields(raw)
+	if err != nil {
+		slog.Debug("anyguard ignoring malformed GOFLAGS while computing build tags", logAttrError, err)
+		return nil
+	}
+
+	var tags []string
+	for _, flag := range flags {
+		name, value, hasValue := splitFlagValue(flag)
+		if !hasValue {
+			continue
+		}
+		if name == "-tags" || name == "--tags" {
+			tags = parseBuildTagsFlagValue(value)
+		}
+	}
+	return tags
+}
+
+func splitFlagValue(flag string) (string, string, bool) {
+	index := strings.Index(flag, "=")
+	if index <= 0 {
+		return flag, "", false
+	}
+	return flag[:index], flag[index+1:], true
+}
+
+func parseBuildTagsFlagValue(value string) []string {
+	if strings.Contains(value, " ") || strings.Contains(value, "'") {
+		tags, err := splitQuotedFields(value)
+		if err != nil {
+			slog.Debug("anyguard ignoring malformed -tags value while computing build tags", "value", value, logAttrError, err)
+			return nil
+		}
+		return normalizeBuildTags(tags)
+	}
+	return normalizeBuildTags(strings.Split(value, ","))
+}
+
+func normalizeBuildTags(tags []string) []string {
+	normalized := make([]string, 0, len(tags))
+	seen := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		if _, exists := seen[tag]; exists {
+			continue
+		}
+		seen[tag] = struct{}{}
+		normalized = append(normalized, tag)
+	}
+	return normalized
+}
+
+func splitQuotedFields(value string) ([]string, error) {
+	fields := make([]string, 0)
+	for value != "" {
+		value = trimLeadingSpaceBytes(value)
+		if value == "" {
+			break
+		}
+
+		field, rest, err := nextQuotedField(value)
+		if err != nil {
+			return nil, err
+		}
+		fields = append(fields, field)
+		value = rest
+	}
+	return fields, nil
+}
+
+func trimLeadingSpaceBytes(value string) string {
+	for value != "" && isSpaceByte(value[0]) {
+		value = value[1:]
+	}
+	return value
+}
+
+func nextQuotedField(value string) (string, string, error) {
+	if value[0] == '"' || value[0] == '\'' {
+		return consumeQuotedField(value[0], value[1:])
+	}
+
+	index := firstSpaceByte(value)
+	return value[:index], value[index:], nil
+}
+
+func consumeQuotedField(quote byte, value string) (string, string, error) {
+	index := strings.IndexByte(value, quote)
+	if index < 0 {
+		return "", "", fmt.Errorf("unterminated %c string", quote)
+	}
+	return value[:index], value[index+1:], nil
+}
+
+func firstSpaceByte(value string) int {
+	for index := 0; index < len(value); index++ {
+		if isSpaceByte(value[index]) {
+			return index
+		}
+	}
+	return len(value)
+}
+
+func isSpaceByte(value byte) bool {
+	return value == ' ' || value == '\t' || value == '\n' || value == '\r'
 }
 
 func newParsedPackageKey(file parsedGoFile) parsedPackageKey {
