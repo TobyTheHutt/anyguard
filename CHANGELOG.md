@@ -24,6 +24,7 @@ The format is based on Keep a Changelog, with the current development state trac
 
 ### Fixed
 
+- Pinned all CI `golangci-lint-action` runs to golangci-lint `v2.7.2` so local, plugin-smoke, and workflow lint behavior stay reproducible across the repository. (@TobyTheHutt)
 - Guaranteed deterministic ordering across CLI, analyzer, and module-plugin output by sorting findings consistently and preserving stable report order. (@TobyTheHutt)
 - Fail-closed handling now rejects ambiguous analyzer file identity instead of guessing canonical paths. (@TobyTheHutt)
 - Supported-slot matching now resolves `any` semantically against the universe alias across declaration slots and composite compatibility slots, keeping shadowed or user-defined `any` silent. (@TobyTheHutt)
