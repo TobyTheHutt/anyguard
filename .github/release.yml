@@ -1,0 +1,39 @@
+# GitHub uses this file only for generated GitHub Release notes.
+# Keep CHANGELOG.md as the curated project release history.
+---
+changelog:
+  exclude:
+    labels:
+      - "skip-release-notes"
+      - "release-note:skip"
+    authors:
+      - "dependabot[bot]"
+      - "github-actions[bot]"
+  categories:
+    - title: "Breaking Changes"
+      labels:
+        - "breaking-change"
+        - "semver-major"
+    - title: "Features"
+      labels:
+        - "enhancement"
+        - "feature"
+        - "semver-minor"
+    - title: "Fixes"
+      labels:
+        - "bug"
+        - "fix"
+    - title: "Documentation"
+      labels:
+        - "documentation"
+        - "docs"
+    - title: "Maintenance"
+      labels:
+        - "maintenance"
+        - "chore"
+        - "ci"
+        - "refactor"
+        - "dependencies"
+    - title: "Other Changes"
+      labels:
+        - "*"
