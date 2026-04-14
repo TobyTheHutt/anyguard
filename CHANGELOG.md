@@ -8,6 +8,7 @@ The format is based on Keep a Changelog, with the current development state trac
 
 ### Added
 
+- Added an automated release workflow that validates release-prep pull requests, tags the final `main` commit after merge, and publishes the GitHub release from the curated changelog body. (@TobyTheHutt)
 - Added GitHub generated release-note configuration and label guidance without replacing the curated changelog. (@TobyTheHutt)
 
 ## [2.0.2] - 2026-03-22
