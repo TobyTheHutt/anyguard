@@ -37,7 +37,6 @@ const (
 	releaseVersion     = "1.1.0"
 	releaseModeEnv     = "RELEASE_MODE"
 	releaseNotesCommit = "docs: prepare release notes"
-	releasePRLabelsEnv = "RELEASE_PR_LABELS"
 	releasePRTitleEnv  = "RELEASE_PR_TITLE"
 	scriptTimeout      = 15 * time.Second
 	seedCommitMessage  = "docs: seed changelog"
@@ -111,23 +110,6 @@ func TestPrepareGitHubReleaseValidatesReleasePRTitle(t *testing.T) {
 	requireOutputValue(t, output.tag, releaseTag, outputTag)
 	requireOutputValue(t, output.date, releaseDate, outputDate)
 	requireOutputValue(t, output.tagExists, outputFalse, outputTagExists)
-	requireReleaseBody(t, output.bodyFile, releaseBody)
-}
-
-func TestPrepareGitHubReleaseValidatesReleasePRLabel(t *testing.T) {
-	repo := newReleaseRepo(t)
-
-	repo.writeChangelog(t, changelogWithTopRelease(releaseVersion, releaseBody))
-	repo.commit(t, releaseNotesCommit)
-
-	output := repo.requirePrepareSuccess(
-		t,
-		envAssignment(releaseModeEnv, modeValidatePR),
-		envAssignment(releasePRLabelsEnv, "documentation,release"),
-	)
-
-	requireOutputValue(t, output.releaseDetected, outputTrue, outputRelease)
-	requireOutputValue(t, output.tag, releaseTag, outputTag)
 	requireReleaseBody(t, output.bodyFile, releaseBody)
 }
 

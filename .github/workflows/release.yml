@@ -3,7 +3,7 @@ name: Release
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 
@@ -28,7 +28,6 @@ jobs:
       - name: Validate release metadata
         env:
           RELEASE_MODE: validate-pr
-          RELEASE_PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           RELEASE_PR_TITLE: ${{ github.event.pull_request.title }}
         run: bash ./scripts/ci/prepare-github-release.sh
 
