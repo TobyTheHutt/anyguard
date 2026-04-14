@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-release-pr:
+    name: Validate Release PR
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate release metadata
+        env:
+          RELEASE_MODE: validate-pr
+          RELEASE_PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          RELEASE_PR_TITLE: ${{ github.event.pull_request.title }}
+        run: bash ./scripts/ci/prepare-github-release.sh
+
+  release:
+    name: Tag And Publish Release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Prepare release metadata
+        id: release
+        run: bash ./scripts/ci/prepare-github-release.sh
+
+      - name: Create release tag
+        if: steps.release.outputs.release_detected == 'true' && steps.release.outputs.tag_exists == 'false'
+        run: |
+          release_tag="${{ steps.release.outputs.tag }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --annotate --message "Release ${release_tag}" "${release_tag}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${release_tag}"
+
+      - name: Check GitHub release
+        id: github_release
+        if: steps.release.outputs.release_detected == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_tag="${{ steps.release.outputs.tag }}"
+          release_exists="false"
+
+          if gh release view "${release_tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            release_exists="true"
+          fi
+
+          printf 'release_exists=%s\n' "${release_exists}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish GitHub release
+        if: steps.release.outputs.release_detected == 'true' && steps.github_release.outputs.release_exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_body_file="${{ steps.release.outputs.body_file }}"
+          release_tag="${{ steps.release.outputs.tag }}"
+
+          gh release create "${release_tag}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${release_tag}" \
+            --notes-file "${release_body_file}" \
+            --verify-tag
