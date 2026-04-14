@@ -143,29 +143,6 @@ changelog_changed_in_head() {
 	printf 'true\n'
 }
 
-release_label_is_set() {
-	local labels="${RELEASE_PR_LABELS:-}"
-	local label
-	local trimmed_label
-
-	if [[ "${release_mode}" != "validate-pr" ]]; then
-		printf 'false\n'
-		return
-	fi
-
-	IFS=',' read -r -a label_names <<< "${labels}"
-	for label in "${label_names[@]}"; do
-		trimmed_label="$(printf '%s' "${label}" | xargs)"
-
-		if [[ "${trimmed_label}" == "release" ]]; then
-			printf 'true\n'
-			return
-		fi
-	done
-
-	printf 'false\n'
-}
-
 extract_release_tag_from_subject() {
 	local commit_subject="$1"
 
@@ -282,13 +259,12 @@ current_release_heading="$(read_top_release_heading_from_file "${changelog_path}
 previous_release_heading="$(read_previous_top_release_heading "${changelog_path}")"
 changelog_changed="$(changelog_changed_in_head "${changelog_path}")"
 changelog_heading_changed="false"
-release_label_detected="$(release_label_is_set)"
 
 if [[ "${changelog_changed}" == "true" && "${current_release_heading}" != "${previous_release_heading}" ]]; then
 	changelog_heading_changed="true"
 fi
 
-if [[ -z "${subject_release_tag}" && "${release_label_detected}" == "false" && "${changelog_heading_changed}" == "false" ]]; then
+if [[ -z "${subject_release_tag}" && "${changelog_heading_changed}" == "false" ]]; then
 	write_skip_outputs
 	exit 0
 fi

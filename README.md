@@ -8,7 +8,7 @@ Release history lives in [`CHANGELOG.md`](CHANGELOG.md).
 
 Release-prep pull requests may be squash-merged. The [`Release`](.github/workflows/release.yml) workflow validates release-prep pull requests before merge, then runs again after the final commit lands on `main`, creates the `vX.Y.Z` tag on that commit, and publishes the GitHub release with the changelog entry as the release body.
 
-Use a pull request or squash commit title of `release: vX.Y.Z`, add the `release` label, or make the top `CHANGELOG.md` release heading change to a new dated section. Release pull requests fail early when the version is malformed, the changelog entry is inconsistent, or the tag already exists. After merge, if a matching tag already exists on a different commit, the workflow fails instead of moving it.
+Use a pull request or squash commit title of `release: vX.Y.Z`, or make the top `CHANGELOG.md` release heading change to a new dated section. Release pull requests fail early when the version tag is malformed, the changelog entry is inconsistent, or the version tag already exists. After merge, if a matching version tag already exists on a different commit, the workflow fails instead of moving it.
 
 ### GitHub Release Notes
 
