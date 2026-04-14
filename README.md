@@ -4,6 +4,23 @@ A Go analyzer and CLI that controls where `any` can be used.
 
 Release history lives in [`CHANGELOG.md`](CHANGELOG.md).
 
+### GitHub Release Notes
+
+GitHub-generated release notes are configured in [`.github/release.yml`](.github/release.yml). That file only controls the generated GitHub Release UI and Releases API output.
+
+Apply one of these labels to each merged pull request when generated release notes should place it in a specific section:
+
+| Generated section | Labels |
+| --- | --- |
+| Breaking Changes | `breaking-change`, `semver-major` |
+| Features | `enhancement`, `feature`, `semver-minor` |
+| Fixes | `bug`, `fix` |
+| Documentation | `documentation`, `docs` |
+| Maintenance | `maintenance`, `chore`, `ci`, `refactor`, `dependencies` |
+| Other Changes | any merged pull request that does not match an earlier section |
+
+Use `skip-release-notes` or `release-note:skip` for pull requests that should stay out of generated release notes. Automation-only pull requests from `dependabot[bot]` and `github-actions[bot]` are excluded as release-note noise; label human-reviewed dependency, CI, or refactor work as `maintenance` when it should appear.
+
 ### Why
 
 `any` is useful at boundaries but unchecked usage spreads quickly and weakens type safety.  
