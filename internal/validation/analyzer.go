@@ -59,12 +59,7 @@ type analyzerConfig struct {
 	allowlistPath      string
 	roots              string
 	repoRoot           string
-	loadRepoValidation func(
-		repoRoot string,
-		roots []string,
-		allowlist AnyAllowlist,
-		allowlistFingerprint string,
-	) (repoValidationResult, error)
+	loadRepoValidation func(repoValidationConfig) (repoValidationResult, error)
 }
 
 type analyzerFile struct {
@@ -96,13 +91,19 @@ func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	loadedAllowlist, err := loadAnyAllowlist(allowlistPath)
+
+	buildCtx := currentBuildContext()
+	validationConfig, err := loadRepoValidationConfig(repoRoot, roots, allowlistPath, buildCtx)
 	if err != nil {
 		return nil, err
 	}
-	allowlist := loadedAllowlist.allowlist
 
-	files, err := collectAnalyzerFiles(pass, repoRoot, roots, allowlist.ExcludeGlobs)
+	files, err := collectAnalyzerFilesWithNormalizedRoots(
+		pass,
+		repoRoot,
+		validationConfig.roots,
+		validationConfig.allowlist.ExcludeGlobs,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +114,7 @@ func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 
 	// collectAnalyzerFindings builds packageFindings for current-package diagnostics,
 	// while repo-wide validation is cached across analyzer passes in the same process.
-	repoResult, err := cfg.loadRepoValidationResult(repoRoot, roots, allowlist, loadedAllowlist.fingerprint)
+	repoResult, err := cfg.loadRepoValidationResult(validationConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -122,16 +123,11 @@ func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 	return analysisResult{}, nil
 }
 
-func (cfg *analyzerConfig) loadRepoValidationResult(
-	repoRoot string,
-	roots []string,
-	allowlist AnyAllowlist,
-	allowlistFingerprint string,
-) (repoValidationResult, error) {
+func (cfg *analyzerConfig) loadRepoValidationResult(config repoValidationConfig) (repoValidationResult, error) {
 	if cfg.loadRepoValidation != nil {
-		return cfg.loadRepoValidation(repoRoot, roots, allowlist, allowlistFingerprint)
+		return cfg.loadRepoValidation(config)
 	}
-	return loadRepoValidationResult(repoRoot, roots, allowlist, allowlistFingerprint)
+	return loadRepoValidationResult(config)
 }
 
 func (cfg *analyzerConfig) resolveRepoRoot(pass *analysis.Pass) (string, error) {
@@ -200,6 +196,15 @@ func resolveAllowlistPath(repoRoot, configured string) (string, error) {
 
 func collectAnalyzerFiles(pass *analysis.Pass, repoRoot string, roots []string, excludeGlobs []string) ([]analyzerFile, error) {
 	filteredRoots := normalizeConfiguredRoots(roots, repoRoot)
+	return collectAnalyzerFilesWithNormalizedRoots(pass, repoRoot, filteredRoots, excludeGlobs)
+}
+
+func collectAnalyzerFilesWithNormalizedRoots(
+	pass *analysis.Pass,
+	repoRoot string,
+	filteredRoots []string,
+	excludeGlobs []string,
+) ([]analyzerFile, error) {
 	if len(filteredRoots) == 0 {
 		return nil, errors.New("no usable roots after normalization")
 	}

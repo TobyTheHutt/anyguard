@@ -83,23 +83,15 @@ func TestAnalyzerRunReportsPackageLocalDiagnosticsAndReusesRepoValidation(t *tes
 	cfg := testSyntheticAnalyzerConfig(fixture)
 	var cache repoValidationCache
 	repoValidationCalls := 0
-	cfg.loadRepoValidation = func(
-		repoRoot string,
-		roots []string,
-		allowlist AnyAllowlist,
-		allowlistFingerprint string,
-	) (repoValidationResult, error) {
-		buildCtx := currentBuildContext()
-		key := newRepoValidationCacheKey(
-			repoRoot,
-			roots,
-			allowlistFingerprint,
-			allowlist.ExcludeGlobs,
-			buildContextCacheKey(buildCtx),
-		)
-		return cache.load(key, func() (repoValidationResult, error) {
+	cfg.loadRepoValidation = func(config repoValidationConfig) (repoValidationResult, error) {
+		return cache.load(config.cacheKey, func() (repoValidationResult, error) {
 			repoValidationCalls++
-			return collectRepoValidationResultWithBuildContext(repoRoot, roots, allowlist, buildCtx)
+			return collectRepoValidationResultWithBuildContext(
+				config.repoRoot,
+				config.roots,
+				config.allowlist,
+				config.buildCtx,
+			)
 		})
 	}
 
