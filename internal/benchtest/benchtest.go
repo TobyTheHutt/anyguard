@@ -8,6 +8,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -92,6 +93,14 @@ type SyntheticRepo struct {
 	Stats                 RepoStats
 }
 
+type CheckedInRepo struct {
+	AllowlistPath    string
+	AllowlistRelPath string
+	PackagePatterns  []string
+	Root             string
+	Roots            []string
+}
+
 type PackageSnapshot struct {
 	Fset      *token.FileSet
 	Files     []*ast.File
@@ -172,6 +181,82 @@ func CopyModuleTree(tb testing.TB, srcRoot string) string {
 	return dstRoot
 }
 
+// CurrentCheckedInRepo resolves the repository rooted at the checked-in source
+// tree so benchmarks can measure the current checkout without generating a
+// synthetic fixture.
+func CurrentCheckedInRepo(tb testing.TB) CheckedInRepo {
+	tb.Helper()
+
+	repoRoot := resolveCheckedInRepoRoot(tb)
+	goModPath := filepath.Join(repoRoot, goModFileName)
+	if !checkedInRepoFileExists(goModPath) {
+		tb.Fatalf("expected checked-in repo go.mod at %q", goModPath)
+	}
+
+	allowlistRelPath := defaultAllowlistPath
+	allowlistPath := filepath.Join(repoRoot, filepath.FromSlash(allowlistRelPath))
+	if !checkedInRepoFileExists(allowlistPath) {
+		tb.Fatalf("expected checked-in repo allowlist at %q", allowlistPath)
+	}
+
+	packagePatterns := []string{defaultConfiguredRoot}
+	roots := []string{defaultConfiguredRoot}
+	return CheckedInRepo{
+		AllowlistPath:    allowlistPath,
+		AllowlistRelPath: allowlistRelPath,
+		PackagePatterns:  packagePatterns,
+		Root:             repoRoot,
+		Roots:            roots,
+	}
+}
+
+func resolveCheckedInRepoRoot(tb testing.TB) string {
+	tb.Helper()
+
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		tb.Fatal("resolve checked-in repo root: runtime caller unavailable")
+	}
+
+	sourceDir := filepath.Dir(sourceFile)
+	searchDir := sourceDir
+	for {
+		goModPath := filepath.Join(searchDir, goModFileName)
+		gitDirPath := filepath.Join(searchDir, ".git")
+		hasGoMod := checkedInRepoFileExists(goModPath)
+		hasGitDir := checkedInRepoDirExists(gitDirPath)
+		if hasGoMod || hasGitDir {
+			repoRoot := searchDir
+			return repoRoot
+		}
+
+		parentDir := filepath.Dir(searchDir)
+		if parentDir == searchDir {
+			break
+		}
+		searchDir = parentDir
+	}
+
+	tb.Fatalf("resolve checked-in repo root: no repo marker found while walking upward from %q", sourceDir)
+	return ""
+}
+
+func checkedInRepoFileExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
+}
+
+func checkedInRepoDirExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
+}
+
 func copyModuleTreeEntry(srcRoot, dstRoot, path string, entry os.DirEntry, walkErr error) error {
 	if walkErr != nil {
 		return walkErr
@@ -233,6 +318,10 @@ func LoadPackageSnapshotsWithMode(
 
 	snapshots := make([]PackageSnapshot, 0, len(pkgs))
 	for _, pkg := range pkgs {
+		if shouldSkipSnapshotPackage(pkg) {
+			continue
+		}
+
 		validateSnapshotPackage(tb, pkg, loadMode)
 		snapshots = append(snapshots, newPackageSnapshot(pkg))
 	}
@@ -249,6 +338,23 @@ func snapshotPackageLoadMode(loadMode PackageLoadMode) packages.LoadMode {
 		mode = packageLoadModeSyntax
 	}
 	return mode
+}
+
+func shouldSkipSnapshotPackage(pkg *packages.Package) bool {
+	if pkg == nil {
+		return true
+	}
+
+	hasGoFiles := len(pkg.GoFiles) > 0
+	hasCompiledGoFiles := len(pkg.CompiledGoFiles) > 0
+	if hasGoFiles || hasCompiledGoFiles {
+		return false
+	}
+
+	// Some `./...` sweeps include test-only packages with no ordinary source
+	// files. Analyzer and module-plugin passes do not run on those empty inputs.
+	hasSyntax := len(pkg.Syntax) > 0
+	return !hasSyntax
 }
 
 func validateSnapshotPackage(tb testing.TB, pkg *packages.Package, loadMode PackageLoadMode) {

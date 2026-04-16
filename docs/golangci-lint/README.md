@@ -6,10 +6,7 @@
 - Plugin import path: `github.com/tobythehutt/anyguard/v2/plugin`
 - Linter name in `.golangci.yml`: `anyguard`
 - Module-plugin diagnostics follow the same deterministic ordering compatibility guarantee as the CLI and public analyzer.
-- The plugin uses the same AST-slot-driven contract as the CLI and public analyzer.
-- It requests golangci-lint `syntax` load mode. Supported-slot matching, shadowed-`any` suppression, and repo-wide stale-selector validation use parsed syntax plus lexical scope resolution rather than `types.Info`.
-- It reports `any` in supported AST child slots, and every supported slot uses lexical resolution of the universe `any` alias to suppress shadowed declarations.
-- The detection contract distinguishes dedicated type-position slots from the three compatibility slots, and there are no syntax-only slots left in the implementation.
+- The root README is the canonical reference for behavior and detection scope: [`Execution Model`](../../README.md#execution-model), [`Detection Contract`](../../README.md#detection-contract).
 
 ## Build a custom golangci-lint
 
@@ -54,50 +51,50 @@ linters:
 
 ## Execution model
 
-- Analyzer/plugin path: golangci-lint loads `anyguard` as a `go/analysis` linter and runs one pass per package. Each pass reports only the findings owned by that package after applying the configured roots and `exclude_globs` to the same canonical repository-relative file identities used by repo-wide allowlist resolution. The shared repo validation result keeps repo-wide findings indexed by canonical repository-relative path, so later package passes filter cached findings instead of repeating package-local AST-slot collection.
-- Repo-wide stale-selector validation still happens in that mode. The allowlist is resolved against repo-wide findings across the configured roots once per golangci-lint process and reused by later package passes.
-- Audit path: the repo-wide validation helper used by this repository's tests and benchmarks walks the configured roots once, applies the active Go build context (`//go:build`, `GOOS`, `GOARCH`, `GOFLAGS=-tags=...`, file suffix constraints, and `CGO_ENABLED`), and returns the full violation set. That is the whole-repo audit reference point. The module plugin does not repeat that work on every package.
+- golangci-lint runs `anyguard` as one `go/analysis` pass per package.
+- Diagnostics stay package-local after applying the configured roots and `exclude_globs`.
+- Repo-wide stale-selector validation is resolved once per golangci-lint process and reused across later package passes.
+- The root README [`Execution Model`](../../README.md#execution-model) section is the canonical reference for the full model.
 
 ## Load mode and performance
 
 - The module plugin requires `syntax` load mode.
-- This skips golangci-lint package type checking before `anyguard` runs. Matching, shadowed-`any` suppression, and stale-selector validation do not consume `types.Info`.
-- The plugin also pays one repo-wide allowlist-validation cost per golangci-lint process so stale selectors remain fail-closed across the configured roots.
-- It does not run a whole-repo diagnostic audit on every package. Only current-package diagnostics are emitted per pass.
-- Compared with the audit path, the tradeoff is lower per-package front-end cost but no repeated repo scan for every package.
-- Module-plugin diagnostics stay sorted by `file`, `line`, `column`, `category`, and `owner`, independent of configured root order, filesystem traversal order, and map iteration.
-- Canonical finding identity and exact allowlist matching include `line` and `column` coordinates.
-- Legacy allowlist selectors that omit coordinates are accepted only when `{path, owner, category}` still resolves to exactly one current finding.
+- Matching, shadowed-`any` suppression, and stale-selector validation do not consume `types.Info`.
+- The plugin pays one repo-wide allowlist-validation cost per golangci-lint process and does not rerun a whole-repo diagnostic audit on every package.
+- Finding identity and reporting order stay exact and deterministic: `file`, `line`, `column`, `category`, `owner`.
 - Measure the repository smoke path with:
 
 ```bash
 /usr/bin/time -f 'elapsed=%E maxrss=%MKB' bash scripts/ci/run-golangci-plugin-smoke.sh
 ```
 
+- Checked-in repo module-plugin regression baseline:
+
+```bash
+go test -run=^$ -bench=BenchmarkCheckedInRepoModulePluginPath -benchmem -benchtime=1x ./plugin
+```
+
 - Run the focused execution-model contract tests with:
 
 ```bash
-go test ./internal/validation -run 'TestValidateAnyUsageAuditsWholeRepo|TestAnalyzerRunUsesRepoWideAllowlistValidation|TestAnalyzerRunReportsPackageLocalDiagnosticsAndReusesRepoValidation'
+go test ./internal/validation -run 'TestValidateAnyUsageAuditsWholeRepo|TestAnalyzerRunUsesRepoWideAllowlistValidation|TestAnalyzerRunReportsPackageLocalDiagnosticsAndReusesRepoValidation|TestCheckedInRepoAnalyzerReusesRepoValidationAcrossPackageSweep'
 ```
 
-- Measure the local module-plugin benchmark path without building `custom-gcl`:
+- Run the deterministic local module-plugin smoke benchmark without building `custom-gcl`:
 
 ```bash
-go test -bench=ModulePluginSmokePath -run=^$ ./plugin
+go test -run=^$ -bench=BenchmarkModulePluginSmokePath -benchmem -benchtime=1x ./plugin
 ```
 
-- Run the focused analyzer/plugin perf-sanity benchmarks with:
+- Use `BenchmarkCheckedInRepoModulePluginPath` in CI and regression checks.
 
-```bash
-go test -run=^$ -bench='BenchmarkAnalyzerRun|BenchmarkModulePluginSmokePath' -benchtime=1x ./internal/validation ./plugin
-```
+- For the full perf-sanity suite and benchmark meanings, see the root README [`Development`](../../README.md#development) section.
 
 ## Upstream readiness
 
 For maintainers evaluating possible core inclusion:
 
 - The normative spec is the root [`Behavior`](../../README.md#behavior), [`Comparison With Generic Ban-Pattern Linters`](../../README.md#comparison-with-generic-ban-pattern-linters), [`Allowlist Schema`](../../README.md#allowlist-schema), and [`Detection Contract`](../../README.md#detection-contract).
-- Supported syntax categories are exactly the AST child slots in the detection contract. Every supported slot uses lexical resolution of the universe `any` alias. The only slots outside dedicated type positions are the three compatibility slots. Anything outside that list is out of scope and intentionally silent.
 - The module plugin uses golangci-lint `syntax` load mode. Supported-slot matching, shadowed-`any` suppression, and repo-wide stale-selector validation run from parsed syntax plus lexical scope state rather than `types.Info`.
 - Each finding has one exact identity: `{path, owner, category, line, column}`. Allowlist matching is exact on that identity.
 - Legacy selectors without `line` and `column` are accepted only when their `{path, owner, category}` triple still resolves to exactly one current finding.
@@ -105,10 +102,6 @@ For maintainers evaluating possible core inclusion:
 - The analyzer fails closed on unresolved file identity, allowlist parse/validation errors, stale or ambiguous selectors, and traversal or parse failures.
 - CLI, analyzer, and module-plugin reporting order is a compatibility guarantee: no scoring, no heuristic ranking, and stable sort order by `file`, `line`, `column`, `category`, and `owner`.
 - Ordering does not depend on configured root order, filesystem traversal order, or map iteration.
-- False positives should mostly come down to scope. There are no syntax-only slots. `*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]` remain supported compatibility slots, so cases such as `any(1)`, `Single[any]{}`, and `Box[int, any]{}` remain reportable by contract.
-- Allowlist strictness is deliberate in schema version `2`: no broad file-level or owner-only exceptions, no duplicate selectors, no half-specified selector coordinates, and no selectors that fail to resolve to a current finding.
-- Non-goals: type-parameter constraints, broader unsafe-dynamic-use detection, or claims that every finding is a bug or security issue.
-- The root comparison section is the canonical answer to "why not just use an existing ban-pattern linter?": overlap exists at the policy level, but `anyguard` is specifically about exact exceptions, stale-selector rejection, and a documented syntax-slot contract.
 - Treat this as a policy linter, not a detector. It enforces repository policy over `any`. Upstream inclusion is still not guaranteed.
 
 ## Run

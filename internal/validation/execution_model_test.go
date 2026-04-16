@@ -11,6 +11,7 @@ const (
 	errValidateAnyUsageFromFile       = "validate any usage from file: %v"
 	errUnexpectedSnapshotCount        = "unexpected package snapshot count: got %d want %d"
 	errExpectedSingleRepoValidation   = "expected one repo-wide validation across package passes, got %d"
+	errExpectedCheckedInRepoSnapshots = "expected checked-in repo package snapshots, got %d"
 	errUnexpectedPerPackageDiagnostic = "unexpected per-package analyzer diagnostics: got %d want %d"
 	errUnexpectedDiagnosticTotal      = "unexpected analyzer diagnostic total across package passes: got %d want %d"
 )
@@ -111,6 +112,55 @@ func TestAnalyzerRunReportsPackageLocalDiagnosticsAndReusesRepoValidation(t *tes
 	}
 	if got, want := totalDiagnostics, len(auditViolations); got != want {
 		t.Fatalf(errUnexpectedDiagnosticTotal, got, want)
+	}
+}
+
+func TestCheckedInRepoAnalyzerReusesRepoValidationAcrossPackageSweep(t *testing.T) {
+	resetProcessRepoValidationCacheForTesting()
+	t.Cleanup(resetProcessRepoValidationCacheForTesting)
+
+	checkedInRepo := benchtest.CurrentCheckedInRepo(t)
+	snapshots := benchtest.LoadPackageSnapshots(t, checkedInRepo.Root, checkedInRepo.PackagePatterns)
+	snapshotCount := len(snapshots)
+	if snapshotCount == 0 {
+		t.Fatalf(errExpectedCheckedInRepoSnapshots, snapshotCount)
+	}
+
+	cfg := &analyzerConfig{
+		allowlistPath: checkedInRepo.AllowlistRelPath,
+		repoRoot:      checkedInRepo.Root,
+		roots:         DefaultRoots,
+	}
+
+	var cache repoValidationCache
+	repoValidationCalls := 0
+	cfg.loadRepoValidation = func(config repoValidationConfig) (repoValidationResult, error) {
+		return cache.load(config.cacheKey, func() (repoValidationResult, error) {
+			repoValidationCalls++
+			return collectRepoValidationResultWithBuildContext(
+				config.repoRoot,
+				config.roots,
+				config.allowlist,
+				config.excludeGlobs,
+				config.buildCtx,
+			)
+		})
+	}
+
+	for _, snapshot := range snapshots {
+		_ = testRunAnalyzerDiagnostics(t, cfg, snapshot)
+	}
+	if repoValidationCalls != 1 {
+		t.Fatalf(errExpectedSingleRepoValidation, repoValidationCalls)
+	}
+
+	// Re-run one representative package after the full sweep to lock the
+	// steady-state cache behavior on the checked-in repository layout.
+	representativeIndex := snapshotCount / 2
+	representativeSnapshot := snapshots[representativeIndex]
+	_ = testRunAnalyzerDiagnostics(t, cfg, representativeSnapshot)
+	if repoValidationCalls != 1 {
+		t.Fatalf(errExpectedSingleRepoValidation, repoValidationCalls)
 	}
 }
 

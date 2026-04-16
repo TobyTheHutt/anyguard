@@ -12,6 +12,7 @@ The format is based on Keep a Changelog, with the current development state trac
 - Added GitHub generated release-note configuration and label guidance without replacing the curated changelog. (@TobyTheHutt)
 - Added exclude-glob microbenchmarks that compare the previous per-file regex compilation path with reused compiled matchers. (@TobyTheHutt)
 - Added analyzer benchmarks for cold passes, reused passes, and warmed-cache passes. (@TobyTheHutt)
+- Added checked-in repo perf-sanity benchmarks, CI commands, and an analyzer-sweep regression test for repo-wide validation, cold and warm analyzer passes, and module-plugin cost. (@TobyTheHutt)
 
 ### Changed
 

@@ -32,8 +32,26 @@ jobs:
       - name: Run tests with race detector
         run: go test -race -v ./...
 
-      - name: Run benchmarks
-        run: go test -bench=. -run=^$ ./...
+  perf-sanity:
+    name: Perf Sanity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.x"
+
+      - name: Get dependencies
+        run: go get -v -t -d ./...
+
+      - name: Benchmark validation perf sanity
+        run: go test -run=^$ -bench='BenchmarkCheckedInRepoValidation|BenchmarkCheckedInRepoAnalyzerColdPass|BenchmarkCheckedInRepoAnalyzerWarmPass' -benchmem -benchtime=1x ./internal/validation
+
+      - name: Benchmark plugin perf sanity
+        run: go test -run=^$ -bench=BenchmarkCheckedInRepoModulePluginPath -benchmem -benchtime=1x ./plugin
 
   lint:
     name: Lint

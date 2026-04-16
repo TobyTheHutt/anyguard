@@ -198,7 +198,7 @@ Nested `any` is reportable only when the nested identifier still appears in one 
 go test ./...
 
 # Run focused execution-model contract tests
-go test ./internal/validation -run 'TestValidateAnyUsageAuditsWholeRepo|TestAnalyzerRunUsesRepoWideAllowlistValidation|TestAnalyzerRunReportsPackageLocalDiagnosticsAndReusesRepoValidation'
+go test ./internal/validation -run 'TestValidateAnyUsageAuditsWholeRepo|TestAnalyzerRunUsesRepoWideAllowlistValidation|TestAnalyzerRunReportsPackageLocalDiagnosticsAndReusesRepoValidation|TestCheckedInRepoAnalyzerReusesRepoValidationAcrossPackageSweep'
 
 # Run benchmarks
 go test -bench=. ./...
@@ -206,8 +206,14 @@ go test -bench=. ./...
 # Benchmark only (skip unit tests)
 go test -bench=. -run=^$ ./...
 
-# Run focused perf-sanity benchmarks
-go test -run=^$ -bench='BenchmarkAnalyzerRun|BenchmarkModulePluginSmokePath' -benchtime=1x ./internal/validation ./plugin
+# Run checked-in repo perf-sanity benchmarks
+go test -run=^$ -bench=BenchmarkCheckedInRepoValidation -benchmem -benchtime=1x ./internal/validation
+go test -run=^$ -bench=BenchmarkCheckedInRepoAnalyzerColdPass -benchmem -benchtime=1x ./internal/validation
+go test -run=^$ -bench=BenchmarkCheckedInRepoAnalyzerWarmPass -benchmem -benchtime=1x ./internal/validation
+go test -run=^$ -bench=BenchmarkCheckedInRepoModulePluginPath -benchmem -benchtime=1x ./plugin
+
+# Run the deterministic module-plugin smoke benchmark
+go test -run=^$ -bench=BenchmarkModulePluginSmokePath -benchmem -benchtime=1x ./plugin
 
 # Run lint
 golangci-lint run
@@ -216,7 +222,17 @@ golangci-lint run
 bash scripts/ci/run-golangci-plugin-smoke.sh
 ```
 
-The benchmark suite includes `ValidateAnyUsage`, repo-wide finding collection and allowlist resolution helpers, analyzer `Run` in `cold-pass` and `reused-pass` modes, and the golangci-lint module-plugin smoke path. The focused execution-model tests and perf-sanity benchmarks above are the maintainers' contract for package-local analyzer diagnostics plus repo-wide stale-selector validation.
+The perf-sanity commands above separate the costs that matter during release reviews:
+
+| Benchmark | Measures |
+| --- | --- |
+| `BenchmarkCheckedInRepoValidation` | Whole-repo audit on this checkout: root resolution, build-aware walk, parsing, finding collection, and allowlist resolution. |
+| `BenchmarkCheckedInRepoAnalyzerColdPass` | First analyzer sweep after clearing the shared repo-validation cache. |
+| `BenchmarkCheckedInRepoAnalyzerWarmPass` | Analyzer sweep after repo-wide validation is already cached. |
+| `BenchmarkCheckedInRepoModulePluginPath` | Syntax-load module-plugin sweep across this checkout with package reloads each iteration. |
+| `BenchmarkModulePluginSmokePath` | Small smoke fixture for plugin ordering and syntax-vs-types baselines. |
+
+Use `BenchmarkModulePluginSmokePath` for quick local iteration. Use `BenchmarkCheckedInRepoModulePluginPath` in CI and regression checks.
 
 ### golangci-lint integration
 
