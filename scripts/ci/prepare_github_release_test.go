@@ -14,10 +14,12 @@ import (
 const (
 	changelogFile      = "CHANGELOG.md"
 	gitAddCommand      = "add"
+	gitBareFlag        = "--bare"
 	gitCommand         = "git"
 	gitConfigCommand   = "config"
 	gitInitCommand     = "init"
 	gitOriginRemote    = "origin"
+	gitRemoteCommand   = "remote"
 	gitTagCommand      = "tag"
 	githubOutputFile   = "github-output"
 	modeValidatePR     = "validate-pr"
@@ -329,8 +331,8 @@ func (repo releaseRepo) addOriginWithTag(t *testing.T, tag string) {
 
 	originDir := t.TempDir()
 
-	runCommand(t, originDir, gitCommand, gitInitCommand, "--bare", "-q")
-	runCommand(t, repo.dir, gitCommand, "remote", gitAddCommand, gitOriginRemote, originDir)
+	runCommand(t, originDir, gitCommand, gitInitCommand, gitBareFlag, "-q")
+	runCommand(t, repo.dir, gitCommand, gitRemoteCommand, gitAddCommand, gitOriginRemote, originDir)
 	runCommand(t, repo.dir, gitCommand, gitTagCommand, tag)
 	runCommand(t, repo.dir, gitCommand, "push", gitOriginRemote, "refs/tags/"+tag)
 	runCommand(t, repo.dir, gitCommand, gitTagCommand, "-d", tag)
@@ -341,8 +343,8 @@ func (repo releaseRepo) addOrigin(t *testing.T) {
 
 	originDir := t.TempDir()
 
-	runCommand(t, originDir, gitCommand, gitInitCommand, "--bare", "-q")
-	runCommand(t, repo.dir, gitCommand, "remote", gitAddCommand, gitOriginRemote, originDir)
+	runCommand(t, originDir, gitCommand, gitInitCommand, gitBareFlag, "-q")
+	runCommand(t, repo.dir, gitCommand, gitRemoteCommand, gitAddCommand, gitOriginRemote, originDir)
 }
 
 func (repo releaseRepo) requirePrepareSuccess(t *testing.T, environment ...string) prepareOutput {
