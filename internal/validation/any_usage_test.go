@@ -3,10 +3,8 @@ package validation
 import (
 	"go/ast"
 	"go/build"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -679,7 +677,6 @@ func Local() {
 func TestVisitCompositeTypeAnySlotIgnoresNilExpr(t *testing.T) {
 	collector := anyUsageCollector{
 		file: testSamplePath,
-		info: &types.Info{Uses: make(map[*ast.Ident]types.Object)},
 	}
 	collector.visitCompositeTypeAnySlot(anyCategoryArrayTypeElt, "Owner", nil)
 	if len(collector.usages) != 0 {
@@ -1094,127 +1091,108 @@ func Use(value any) {
 	}
 }
 
-func TestResolvesToPredeclaredAny(t *testing.T) {
+func TestCollectAnyUsagesUsesLexicalScope(t *testing.T) {
 	tests := []struct {
 		name string
 		src  string
-		line int
-		want bool
+		want []usageSummary
 	}{
 		{
-			name: "universe alias in field type",
-			src: `package p
-
-func Use(value any) {}
-`,
-			line: 3,
-			want: true,
-		},
-		{
-			name: "universe alias in conversion callee",
+			name: "local variable shadowing starts after declaration",
 			src: `package p
 
 func Use(value any) {
 	_ = any(value)
+	any := 0
+	_ = []any{}
+	_ = any
+	_ = any(value)
 }
 `,
-			line: 4,
-			want: true,
+			want: []usageSummary{
+				{category: anyCategoryFieldType, owner: "Use", line: 3},
+				{category: anyCategoryCallExprFun, owner: "Use", line: 4},
+			},
 		},
 		{
-			name: "user defined any declaration",
+			name: "function named any shadows package block",
 			src: `package p
 
-type any interface{}
+func any(v int) int {
+	return v
+}
+
+func Use(value any) {
+	_ = any(1)
+	_ = []any{}
+}
 `,
-			line: 3,
-			want: false,
+			want: []usageSummary{},
 		},
 		{
-			name: "user defined any use",
+			name: "type named any shadows local block",
 			src: `package p
 
-type any interface{}
-type Payload map[string]any
+type Box[T any] struct{}
+
+func Use() {
+	type any struct{}
+	var _ any
+	_ = Box[any]{}
+}
 `,
-			line: 4,
-			want: false,
+			want: []usageSummary{},
 		},
 		{
-			name: "user defined any alias use",
+			name: "type parameter named any shadows signature and body",
 			src: `package p
 
-type any = string
-type Payload map[string]any
+func Use[any interface{}](value any) {
+	_ = []any{}
+	_ = any(value)
+}
 `,
-			line: 4,
-			want: false,
+			want: []usageSummary{},
 		},
 		{
-			name: "package qualifier named any",
+			name: "import alias named any shadows file block",
 			src: `package p
 
 import any "io"
 
-var _ any.Reader
+var _ any
 `,
-			line: 5,
-			want: false,
+			want: []usageSummary{},
 		},
 		{
-			name: "local type named any",
+			name: "generic instantiations and conversions use universe any",
 			src: `package p
 
-func Use() {
-	type any int
-	var _ any
+type Single[T any] struct{}
+type Pair[T, U any] struct{}
+
+func Use(value any) {
+	_ = any(value)
+	_ = Single[any]{}
+	_ = Pair[int, any]{}
 }
 `,
-			line: 5,
-			want: false,
-		},
-		{
-			name: "shadowed function any call",
-			src: `package p
-
-func any(v int) int { return v }
-
-func Use() {
-	_ = any(1)
-}
-`,
-			line: 6,
-			want: false,
+			want: []usageSummary{
+				{category: anyCategoryFieldType, owner: "Use", line: 6},
+				{category: anyCategoryCallExprFun, owner: "Use", line: 7},
+				{category: anyCategoryIndexExprIndex, owner: "Use", line: 8},
+				{category: anyCategoryIndexListIndex, owner: "Use", line: 9},
+			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, testSamplePath, tt.src, parser.ParseComments)
-			if err != nil {
-				t.Fatalf(testParseFileErrFmt, err)
-			}
-
-			info := typeCheckTestFile(fset, file)
-			ident := findAnyIdentOnLine(t, fset, file, tt.line)
-			if got := resolvesToPredeclaredAny(ident, info); got != tt.want {
-				t.Fatalf("resolvesToPredeclaredAny(line %d) = %t, want %t", tt.line, got, tt.want)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := collectUsageSummaries(t, testCase.src)
+			if !reflect.DeepEqual(got, testCase.want) {
+				t.Fatalf("unexpected lexical usages:\ngot: %#v\nwant: %#v", got, testCase.want)
 			}
 		})
-	}
-}
-
-func TestResolvesToPredeclaredAnyWithoutTypeInfo(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, testSamplePath, "package p\n\nfunc Use(value any) {}\n", parser.ParseComments)
-	if err != nil {
-		t.Fatalf(testParseFileErrFmt, err)
-	}
-
-	ident := findAnyIdentOnLine(t, fset, file, 3)
-	if resolvesToPredeclaredAny(ident, nil) {
-		t.Fatal("expected nil type info to stay quiet")
 	}
 }
 
@@ -1236,6 +1214,21 @@ func Use() {
 	got := collectUsageSummaries(t, src)
 	if len(got) != 0 {
 		t.Fatalf("expected shadowed any to stay quiet, got %#v", got)
+	}
+}
+
+func TestValidateAnyUsageKeepsPackageLevelAnyShadowingPackageWide(t *testing.T) {
+	base := t.TempDir()
+	shadowPath := filepath.Join(testRootAPI, "shadow.go")
+	writeFile(t, filepath.Join(base, shadowPath), "package api\n\nfunc any(v int) int { return v }\n")
+	writeFile(t, apiPath(base, testPayloadFile), "package api\n\ntype Payload map[string]any\n\nfunc Use(value any) {\n\t_ = any(1)\n}\n")
+
+	violations, err := ValidateAnyUsage(AnyAllowlist{Version: anyAllowlistVersion}, base, []string{testRootAPI})
+	if err != nil {
+		t.Fatalf(testValidateUsageErrFmt, err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf(testNoViolationsErrFmt, violations)
 	}
 }
 
@@ -1775,7 +1768,7 @@ func TestParseRootFileReturnsParsedGoFile(t *testing.T) {
 	}
 }
 
-func TestTypeCheckParsedPackageKeepsPartialInfoOnErrors(t *testing.T) {
+func TestCollectAnyUsagesKeepsLexicalFindingsOnInvalidPackages(t *testing.T) {
 	src := `package api
 
 func Use(value any) {
@@ -1790,19 +1783,7 @@ func Use(value any) {
 		t.Fatalf(testParseFileErrFmt, err)
 	}
 
-	info := typeCheckParsedPackage(fset, importer.ForCompiler(fset, sourceImporterMode, nil), parsedPackage{
-		dir:  testRootAPI,
-		name: testDirAPI,
-		files: []parsedGoFile{
-			{
-				relPath: testSamplePath,
-				content: []byte(src),
-				syntax:  file,
-			},
-		},
-	})
-
-	got := collectAnyUsages(testSamplePath, file, info)
+	got := collectFileAnyUsages(testSamplePath, file)
 	want := []usageSummary{
 		{category: anyCategoryFieldType, owner: "Use", line: 3},
 		{category: anyCategoryCallExprFun, owner: "Use", line: 5},
@@ -1940,24 +1921,7 @@ func collectUsageSummaries(t *testing.T, src string) []usageSummary {
 		t.Fatalf(testParseFileErrFmt, err)
 	}
 
-	info := typeCheckTestFile(fset, file)
-	return summarizeUsages(fset, collectAnyUsages(testSamplePath, file, info))
-}
-
-func typeCheckTestFile(fset *token.FileSet, file *ast.File) *types.Info {
-	info := &types.Info{
-		Uses: make(map[*ast.Ident]types.Object),
-	}
-	config := types.Config{
-		DisableUnusedImportCheck: true,
-		Error:                    func(error) {},
-		Importer:                 importer.ForCompiler(fset, sourceImporterMode, nil),
-	}
-	// Focused snippets may omit unrelated declarations; partial type info is enough here.
-	if _, err := config.Check("sample", fset, []*ast.File{file}, info); err != nil {
-		return info
-	}
-	return info
+	return summarizeUsages(fset, collectFileAnyUsages(testSamplePath, file))
 }
 
 func summarizeUsages(fset *token.FileSet, usages []anyUsage) []usageSummary {
@@ -1970,30 +1934,6 @@ func summarizeUsages(fset *token.FileSet, usages []anyUsage) []usageSummary {
 		})
 	}
 	return summaries
-}
-
-func findAnyIdentOnLine(t *testing.T, fset *token.FileSet, file *ast.File, line int) *ast.Ident {
-	t.Helper()
-
-	var ident *ast.Ident
-	ast.Inspect(file, func(node ast.Node) bool {
-		candidate, ok := node.(*ast.Ident)
-		if !ok || candidate.Name != anyName {
-			return true
-		}
-		if fset.Position(candidate.Pos()).Line != line {
-			return true
-		}
-		if ident != nil {
-			t.Fatalf("expected one any identifier on line %d", line)
-		}
-		ident = candidate
-		return true
-	})
-	if ident == nil {
-		t.Fatalf("expected any identifier on line %d", line)
-	}
-	return ident
 }
 
 func dirEntryFromPath(t *testing.T, path string) fs.DirEntry {

@@ -157,7 +157,7 @@ func TestCollectAnalyzerFilesUsesPassReadFile(t *testing.T) {
 	}
 }
 
-func TestCollectAnalyzerFindingsUsesPassTypesInfo(t *testing.T) {
+func TestCollectAnalyzerFindingsUsesLexicalScope(t *testing.T) {
 	base := t.TempDir()
 	sourcePath := filepath.Join(base, testShadowedPath)
 	source := "package pkg\ntype any interface{}\ntype Payload map[string]any\nfunc Use() { _ = any(1) }\n"
@@ -175,9 +175,8 @@ func TestCollectAnalyzerFindingsUsesPassTypesInfo(t *testing.T) {
 	}
 
 	pass := &analysis.Pass{
-		Fset:      fset,
-		Files:     []*ast.File{parsed},
-		TypesInfo: typeCheckTestFile(fset, parsed),
+		Fset:  fset,
+		Files: []*ast.File{parsed},
 	}
 
 	files, err := collectAnalyzerFiles(pass, base, []string{DefaultRoots}, nil)
@@ -187,14 +186,14 @@ func TestCollectAnalyzerFindingsUsesPassTypesInfo(t *testing.T) {
 
 	findings, err := collectAnalyzerFindings(pass, files)
 	if err != nil {
-		t.Fatalf("collect findings: %v", err)
+		t.Fatalf(errBenchmarkCollectFindings, err)
 	}
 	if len(findings) != 0 {
 		t.Fatalf(testShadowedQuiet, collectFindingSummaries(findings))
 	}
 }
 
-func TestCollectAnalyzerFindingsRequiresTypesInfo(t *testing.T) {
+func TestCollectAnalyzerFindingsDoesNotRequireTypesInfo(t *testing.T) {
 	base := t.TempDir()
 	sourcePath := filepath.Join(base, testNilPkgPath)
 	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o750); err != nil {
@@ -220,12 +219,12 @@ func TestCollectAnalyzerFindingsRequiresTypesInfo(t *testing.T) {
 		t.Fatalf(testCollectFiles, err)
 	}
 
-	_, err = collectAnalyzerFindings(pass, files)
-	if err == nil {
-		t.Fatalf("expected types info error")
+	findings, err := collectAnalyzerFindings(pass, files)
+	if err != nil {
+		t.Fatalf(errBenchmarkCollectFindings, err)
 	}
-	if !strings.Contains(err.Error(), errMissingTypesInfo) {
-		t.Fatalf(testUnexpectedErr, err)
+	if got := collectFindingSummaries(findings); len(got) != 1 {
+		t.Fatalf("expected one lexical finding, got %#v", got)
 	}
 }
 

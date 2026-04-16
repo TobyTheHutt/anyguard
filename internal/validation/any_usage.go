@@ -8,10 +8,8 @@ import (
 	"fmt"
 	"go/ast"
 	"go/build"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -31,7 +29,6 @@ const (
 	rootAllPattern        = "..."
 	anyTokenMarker        = "<<ANY>>"
 	anyName               = "any"
-	sourceImporterMode    = "source"
 	goflagsEnvVar         = "GOFLAGS"
 	goosEnvVar            = "GOOS"
 	goarchEnvVar          = "GOARCH"
@@ -42,23 +39,6 @@ const (
 )
 
 var nolintDirectiveRE = regexp.MustCompile(`(?i)\bnolint(?::([a-z0-9_,-]+))?`)
-
-var universeAnyAlias = types.Universe.Lookup(anyName)
-
-func resolvesToPredeclaredAny(ident *ast.Ident, info *types.Info) bool {
-	if ident == nil || info == nil {
-		return false
-	}
-	return info.ObjectOf(ident) == universeAnyAlias
-}
-
-func predeclaredAnyIdent(expr ast.Expr, info *types.Info) (*ast.Ident, bool) {
-	ident, ok := expr.(*ast.Ident)
-	if !ok || !resolvesToPredeclaredAny(ident, info) {
-		return nil, false
-	}
-	return ident, true
-}
 
 // Error represents a single disallowed `any` usage.
 type Error struct {
@@ -279,11 +259,10 @@ func collectRootFindings(
 	}
 
 	findings := make([]collectedFinding, 0)
-	sourceImporter := importer.ForCompiler(parsed.fset, sourceImporterMode, nil)
 	for _, parsedPackage := range parsed.packages {
-		info := typeCheckParsedPackage(parsed.fset, sourceImporter, parsedPackage)
+		resolver := newParsedPackageLexicalAnyResolver(parsedPackage)
 		for _, file := range parsedPackage.files {
-			findings = append(findings, collectParsedFileFindings(parsed.fset, info, file)...)
+			findings = append(findings, collectParsedFileFindings(parsed.fset, resolver, file)...)
 		}
 	}
 	return findings, nil
@@ -309,6 +288,168 @@ type parsedPackage struct {
 	dir   string
 	name  string
 	files []parsedGoFile
+}
+
+// lexicalAnyResolver captures package- and file-block declarations that can
+// shadow the universe `any` alias before per-file statement scopes are walked.
+type lexicalAnyResolver struct {
+	fileScopes             map[*ast.File]lexicalFileScope
+	packageScopeShadowsAny bool
+}
+
+type lexicalFileScope struct {
+	importScopeShadowsAny bool
+}
+
+func newParsedPackageLexicalAnyResolver(pkg parsedPackage) lexicalAnyResolver {
+	files := make([]*ast.File, 0, len(pkg.files))
+	for _, file := range pkg.files {
+		files = append(files, file.syntax)
+	}
+	return newLexicalAnyResolver(files)
+}
+
+// newLexicalAnyResolver scans whole-package declarations up front because
+// package-block names are in scope regardless of source file or declaration order.
+func newLexicalAnyResolver(files []*ast.File) lexicalAnyResolver {
+	resolver := lexicalAnyResolver{
+		fileScopes: make(map[*ast.File]lexicalFileScope, len(files)),
+	}
+
+	for _, file := range files {
+		fileScope := scanLexicalFileScope(file)
+		resolver.fileScopes[file] = fileScope
+		if fileDeclaresPackageAny(file) {
+			resolver.packageScopeShadowsAny = true
+		}
+	}
+
+	return resolver
+}
+
+func scanLexicalFileScope(file *ast.File) lexicalFileScope {
+	if file == nil {
+		return lexicalFileScope{}
+	}
+
+	return lexicalFileScope{
+		importScopeShadowsAny: fileImportsAny(file),
+	}
+}
+
+func fileImportsAny(file *ast.File) bool {
+	for _, decl := range file.Decls {
+		genDecl, ok := decl.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+
+		isImportDecl := genDecl.Tok == token.IMPORT
+		if !isImportDecl {
+			continue
+		}
+
+		if importDeclaresAny(genDecl) {
+			return true
+		}
+	}
+	return false
+}
+
+func importDeclaresAny(decl *ast.GenDecl) bool {
+	for _, spec := range decl.Specs {
+		importSpec, ok := spec.(*ast.ImportSpec)
+		if !ok {
+			continue
+		}
+		if identDeclaresAny(importSpec.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func fileDeclaresPackageAny(file *ast.File) bool {
+	if file == nil {
+		return false
+	}
+
+	for _, decl := range file.Decls {
+		if topLevelDeclaresAny(decl) {
+			return true
+		}
+	}
+	return false
+}
+
+func topLevelDeclaresAny(decl ast.Decl) bool {
+	switch node := decl.(type) {
+	case *ast.FuncDecl:
+		isPackageFunc := node.Recv == nil
+		if !isPackageFunc {
+			return false
+		}
+		return identDeclaresAny(node.Name)
+	case *ast.GenDecl:
+		return genDeclDeclaresAny(node)
+	default:
+		return false
+	}
+}
+
+func genDeclDeclaresAny(decl *ast.GenDecl) bool {
+	switch decl.Tok {
+	case token.CONST, token.VAR:
+		return valueSpecsDeclareAny(decl.Specs)
+	case token.TYPE:
+		return typeSpecsDeclareAny(decl.Specs)
+	default:
+		return false
+	}
+}
+
+func valueSpecsDeclareAny(specs []ast.Spec) bool {
+	for _, spec := range specs {
+		valueSpec, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		if identListDeclaresAny(valueSpec.Names) {
+			return true
+		}
+	}
+	return false
+}
+
+func typeSpecsDeclareAny(specs []ast.Spec) bool {
+	for _, spec := range specs {
+		typeSpec, ok := spec.(*ast.TypeSpec)
+		if !ok {
+			continue
+		}
+		if identDeclaresAny(typeSpec.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func identListDeclaresAny(idents []*ast.Ident) bool {
+	for _, ident := range idents {
+		if identDeclaresAny(ident) {
+			return true
+		}
+	}
+	return false
+}
+
+func identDeclaresAny(ident *ast.Ident) bool {
+	if ident == nil {
+		return false
+	}
+
+	isAnyName := ident.Name == anyName
+	return isAnyName
 }
 
 func collectParsedPackages(
@@ -603,34 +744,6 @@ func newParsedPackageKey(file parsedGoFile) parsedPackageKey {
 	}
 }
 
-func typeCheckParsedPackage(fset *token.FileSet, sourceImporter types.Importer, pkg parsedPackage) *types.Info {
-	files := make([]*ast.File, 0, len(pkg.files))
-	for _, file := range pkg.files {
-		files = append(files, file.syntax)
-	}
-
-	info := &types.Info{
-		Uses: make(map[*ast.Ident]types.Object),
-	}
-
-	packagePath := pkg.dir
-	if packagePath == "" || packagePath == "." {
-		packagePath = pkg.name
-	}
-
-	config := types.Config{
-		DisableUnusedImportCheck: true,
-		Error:                    func(error) {},
-		Importer:                 sourceImporter,
-	}
-	// Keep partial type info on invalid packages so shadowed or unresolved names stay silent.
-	if _, err := config.Check(packagePath, fset, files, info); err != nil {
-		slog.Debug("anyguard partial type-check failed", "package_path", packagePath, "error", err)
-		return info
-	}
-	return info
-}
-
 func resolveRootPath(baseAbs, root string) (string, bool, error) {
 	root = normalizeRootValue(root)
 	if root == "" {
@@ -799,9 +912,9 @@ type collectedFinding struct {
 	suppressedByNolint bool
 }
 
-func collectParsedFileFindings(fset *token.FileSet, info *types.Info, file parsedGoFile) []collectedFinding {
+func collectParsedFileFindings(fset *token.FileSet, resolver lexicalAnyResolver, file parsedGoFile) []collectedFinding {
 	nolintLines := collectNolintLines(file.syntax, fset)
-	uses := collectAnyUsages(file.relPath, file.syntax, info)
+	uses := collectAnyUsages(file.relPath, file.syntax, resolver)
 	if len(uses) == 0 {
 		return nil
 	}
@@ -1090,19 +1203,31 @@ type anyUsage struct {
 
 // anyUsageCollector records findings only from explicitly supported AST slots.
 type anyUsageCollector struct {
-	file   string
-	info   *types.Info
-	usages []anyUsage
+	file     string
+	resolver lexicalAnyResolver
+	scopes   []anyLexicalScope
+	syntax   *ast.File
+	usages   []anyUsage
 }
 
-func collectAnyUsages(relPath string, file *ast.File, info *types.Info) []anyUsage {
+type anyLexicalScope struct {
+	shadowsAny bool
+}
+
+func collectAnyUsages(relPath string, file *ast.File, resolver lexicalAnyResolver) []anyUsage {
 	collector := anyUsageCollector{
-		file:   normalizePath(relPath),
-		info:   info,
-		usages: make([]anyUsage, 0),
+		file:     normalizePath(relPath),
+		resolver: resolver,
+		syntax:   file,
+		usages:   make([]anyUsage, 0),
 	}
 	collector.inspectFile(file)
 	return collector.usages
+}
+
+func collectFileAnyUsages(relPath string, file *ast.File) []anyUsage {
+	resolver := newLexicalAnyResolver([]*ast.File{file})
+	return collectAnyUsages(relPath, file, resolver)
 }
 
 func (collector *anyUsageCollector) inspectFile(file *ast.File) {
@@ -1122,10 +1247,30 @@ func (collector *anyUsageCollector) inspectTopLevelDecl(decl ast.Decl) {
 		}
 	case *ast.FuncDecl:
 		owner := funcDeclOwner(node)
-		collector.inspectReceiverList(node.Recv, owner)
-		collector.inspectFuncType(node.Type, owner)
-		collector.inspectNode(node.Body, owner)
+		collector.inspectFuncDecl(node, owner)
 	}
+}
+
+func (collector *anyUsageCollector) inspectFuncDecl(decl *ast.FuncDecl, owner string) {
+	if decl == nil {
+		return
+	}
+
+	collector.openScope()
+	defer collector.closeScope()
+
+	collector.declareReceiverTypeParams(decl.Recv)
+	if decl.Type != nil {
+		collector.declareTypeParams(decl.Type.TypeParams)
+	}
+	collector.inspectReceiverList(decl.Recv, owner)
+	collector.inspectFuncSignature(decl.Type, owner)
+	collector.declareFieldNames(decl.Recv)
+	if decl.Type != nil {
+		collector.declareFieldNames(decl.Type.Params)
+		collector.declareFieldNames(decl.Type.Results)
+	}
+	collector.inspectNode(decl.Body, owner)
 }
 
 func (collector *anyUsageCollector) inspectLocalDecl(decl ast.Decl, owner string) {
@@ -1141,7 +1286,7 @@ func (collector *anyUsageCollector) inspectLocalDecl(decl ast.Decl, owner string
 func (collector *anyUsageCollector) inspectTopLevelSpec(spec ast.Spec) {
 	switch node := spec.(type) {
 	case *ast.TypeSpec:
-		collector.visitPredeclaredAnySlot(anyCategoryTypeSpecType, node.Name.Name, node.Type)
+		collector.inspectTypeSpec(node.Name.Name, node)
 	case *ast.ValueSpec:
 		owner := valueSpecOwner(node)
 		collector.visitPredeclaredAnySlot(anyCategoryValueSpecType, owner, node.Type)
@@ -1152,19 +1297,50 @@ func (collector *anyUsageCollector) inspectTopLevelSpec(spec ast.Spec) {
 func (collector *anyUsageCollector) inspectLocalSpec(spec ast.Spec, owner string) {
 	switch node := spec.(type) {
 	case *ast.TypeSpec:
-		collector.visitPredeclaredAnySlot(anyCategoryTypeSpecType, owner, node.Type)
+		collector.declareAnyInCurrentScopeFromIdent(node.Name)
+		collector.inspectTypeSpec(owner, node)
 	case *ast.ValueSpec:
 		collector.visitPredeclaredAnySlot(anyCategoryValueSpecType, owner, node.Type)
 		collector.inspectExprs(node.Values, owner)
+		collector.declareAnyInCurrentScopeFromIdents(node.Names)
 	}
 }
 
-func (collector *anyUsageCollector) inspectFuncType(funcType *ast.FuncType, owner string) {
+func (collector *anyUsageCollector) inspectTypeSpec(owner string, spec *ast.TypeSpec) {
+	if spec == nil {
+		return
+	}
+
+	collector.openScope()
+	defer collector.closeScope()
+
+	// Type parameters are visible in the type expression but not after the TypeSpec.
+	collector.declareTypeParams(spec.TypeParams)
+	collector.visitPredeclaredAnySlot(anyCategoryTypeSpecType, owner, spec.Type)
+}
+
+func (collector *anyUsageCollector) inspectFuncSignature(funcType *ast.FuncType, owner string) {
 	if funcType == nil {
 		return
 	}
 	collector.inspectFieldList(funcType.Params, owner)
 	collector.inspectFieldList(funcType.Results, owner)
+}
+
+func (collector *anyUsageCollector) inspectFuncLit(funcLit *ast.FuncLit, owner string) {
+	if funcLit == nil {
+		return
+	}
+
+	collector.openScope()
+	defer collector.closeScope()
+
+	collector.inspectFuncSignature(funcLit.Type, owner)
+	if funcLit.Type != nil {
+		collector.declareFieldNames(funcLit.Type.Params)
+		collector.declareFieldNames(funcLit.Type.Results)
+	}
+	collector.inspectNode(funcLit.Body, owner)
 }
 
 func (collector *anyUsageCollector) inspectReceiverList(receivers *ast.FieldList, owner string) {
@@ -1176,6 +1352,51 @@ func (collector *anyUsageCollector) inspectReceiverList(receivers *ast.FieldList
 			continue
 		}
 		collector.inspectNode(field.Type, owner)
+	}
+}
+
+func (collector *anyUsageCollector) declareReceiverTypeParams(receivers *ast.FieldList) {
+	if receivers == nil {
+		return
+	}
+
+	hasReceiver := len(receivers.List) > 0
+	if !hasReceiver {
+		return
+	}
+
+	receiverType := receivers.List[0].Type
+	if starExpr, ok := receiverType.(*ast.StarExpr); ok {
+		receiverType = starExpr.X
+	}
+
+	// Receiver type arguments declare method receiver type parameters in Go.
+	switch expr := receiverType.(type) {
+	case *ast.IndexExpr:
+		collector.declareAnyInCurrentScopeFromExpr(expr.Index)
+	case *ast.IndexListExpr:
+		for _, index := range expr.Indices {
+			collector.declareAnyInCurrentScopeFromExpr(index)
+		}
+	}
+}
+
+func (collector *anyUsageCollector) declareAnyInCurrentScopeFromExpr(expr ast.Expr) {
+	ident, ok := expr.(*ast.Ident)
+	if ok {
+		collector.declareAnyInCurrentScopeFromIdent(ident)
+	}
+}
+
+func (collector *anyUsageCollector) declareFieldNames(fields *ast.FieldList) {
+	if fields == nil {
+		return
+	}
+	for _, field := range fields.List {
+		if field == nil {
+			continue
+		}
+		collector.declareAnyInCurrentScopeFromIdents(field.Names)
 	}
 }
 
@@ -1203,6 +1424,50 @@ func (collector *anyUsageCollector) inspectStmts(stmts []ast.Stmt, owner string)
 	}
 }
 
+func (collector *anyUsageCollector) openScope() {
+	collector.scopes = append(collector.scopes, anyLexicalScope{})
+}
+
+func (collector *anyUsageCollector) closeScope() {
+	if len(collector.scopes) == 0 {
+		return
+	}
+	collector.scopes = collector.scopes[:len(collector.scopes)-1]
+}
+
+func (collector *anyUsageCollector) declareAnyInCurrentScope() {
+	if len(collector.scopes) == 0 {
+		return
+	}
+
+	current := &collector.scopes[len(collector.scopes)-1]
+	current.shadowsAny = true
+}
+
+func (collector *anyUsageCollector) declareAnyInCurrentScopeFromIdents(idents []*ast.Ident) {
+	if identListDeclaresAny(idents) {
+		collector.declareAnyInCurrentScope()
+	}
+}
+
+func (collector *anyUsageCollector) declareAnyInCurrentScopeFromIdent(ident *ast.Ident) {
+	if identDeclaresAny(ident) {
+		collector.declareAnyInCurrentScope()
+	}
+}
+
+func (collector *anyUsageCollector) declareTypeParams(typeParams *ast.FieldList) {
+	if typeParams == nil {
+		return
+	}
+	for _, field := range typeParams.List {
+		if field == nil {
+			continue
+		}
+		collector.declareAnyInCurrentScopeFromIdents(field.Names)
+	}
+}
+
 func (collector *anyUsageCollector) visitPredeclaredAnySlot(category anyUsageCategory, owner string, expr ast.Expr) {
 	if expr == nil {
 		return
@@ -1220,12 +1485,47 @@ func (collector *anyUsageCollector) visitCompositeTypeAnySlot(category anyUsageC
 }
 
 func (collector *anyUsageCollector) recordPredeclaredAnyUsage(category anyUsageCategory, owner string, expr ast.Expr) {
-	if ident, ok := predeclaredAnyIdent(expr, collector.info); ok {
-		collector.usages = append(collector.usages, anyUsage{
-			identity: newFindingIdentity(collector.file, owner, category, 0, 0),
-			pos:      ident.Pos(),
-		})
+	ident, ok := expr.(*ast.Ident)
+	if !ok {
+		return
 	}
+
+	resolvesToUniverseAny := collector.resolvesToUniverseAny(ident)
+	if !resolvesToUniverseAny {
+		return
+	}
+
+	collector.usages = append(collector.usages, anyUsage{
+		identity: newFindingIdentity(collector.file, owner, category, 0, 0),
+		pos:      ident.Pos(),
+	})
+}
+
+func (collector *anyUsageCollector) resolvesToUniverseAny(ident *ast.Ident) bool {
+	if ident == nil || ident.Name != anyName {
+		return false
+	}
+	if collector.resolver.packageScopeShadowsAny {
+		return false
+	}
+	if collector.fileScopeShadowsAny() {
+		return false
+	}
+	return !collector.localScopeShadowsAny()
+}
+
+func (collector *anyUsageCollector) fileScopeShadowsAny() bool {
+	fileScope := collector.resolver.fileScopes[collector.syntax]
+	return fileScope.importScopeShadowsAny
+}
+
+func (collector *anyUsageCollector) localScopeShadowsAny() bool {
+	for index := len(collector.scopes) - 1; index >= 0; index-- {
+		if collector.scopes[index].shadowsAny {
+			return true
+		}
+	}
+	return false
 }
 
 func newFindingIdentity(relPath, owner string, category anyUsageCategory, line, column int) FindingIdentity {
@@ -1313,10 +1613,9 @@ func (collector *anyUsageCollector) inspectDeclNode(node ast.Node, owner string)
 func (collector *anyUsageCollector) inspectTypeNode(node ast.Node, owner string) bool {
 	switch typed := node.(type) {
 	case *ast.FuncType:
-		collector.inspectFuncType(typed, owner)
+		collector.inspectFuncSignature(typed, owner)
 	case *ast.FuncLit:
-		collector.inspectFuncType(typed.Type, owner)
-		collector.inspectNode(typed.Body, owner)
+		collector.inspectFuncLit(typed, owner)
 	case *ast.StructType:
 		collector.inspectFieldList(typed.Fields, owner)
 	case *ast.InterfaceType:
@@ -1384,6 +1683,9 @@ func (collector *anyUsageCollector) inspectExprNode(node ast.Node, owner string)
 func (collector *anyUsageCollector) inspectSimpleStmtNode(node ast.Node, owner string) bool {
 	switch typed := node.(type) {
 	case *ast.BlockStmt:
+		collector.openScope()
+		defer collector.closeScope()
+
 		collector.inspectStmts(typed.List, owner)
 	case *ast.LabeledStmt:
 		collector.inspectNode(typed.Stmt, owner)
@@ -1397,8 +1699,7 @@ func (collector *anyUsageCollector) inspectSimpleStmtNode(node ast.Node, owner s
 	case *ast.IncDecStmt:
 		collector.inspectNode(typed.X, owner)
 	case *ast.AssignStmt:
-		collector.inspectExprs(typed.Lhs, owner)
-		collector.inspectExprs(typed.Rhs, owner)
+		collector.inspectAssignStmt(typed, owner)
 	case *ast.GoStmt:
 		collector.inspectNode(typed.Call, owner)
 	case *ast.DeferStmt:
@@ -1411,43 +1712,132 @@ func (collector *anyUsageCollector) inspectSimpleStmtNode(node ast.Node, owner s
 	return true
 }
 
+func (collector *anyUsageCollector) inspectAssignStmt(stmt *ast.AssignStmt, owner string) {
+	if stmt == nil {
+		return
+	}
+
+	if stmt.Tok == token.DEFINE {
+		// Short variable declarations resolve their RHS before new LHS names exist.
+		collector.inspectExprs(stmt.Rhs, owner)
+		collector.inspectShortVarDeclLHS(stmt.Lhs, owner)
+		collector.declareShortVarNames(stmt.Lhs)
+		return
+	}
+
+	collector.inspectExprs(stmt.Lhs, owner)
+	collector.inspectExprs(stmt.Rhs, owner)
+}
+
+func (collector *anyUsageCollector) inspectShortVarDeclLHS(exprs []ast.Expr, owner string) {
+	for _, expr := range exprs {
+		if _, ok := expr.(*ast.Ident); ok {
+			continue
+		}
+		collector.inspectNode(expr, owner)
+	}
+}
+
+func (collector *anyUsageCollector) declareShortVarNames(exprs []ast.Expr) {
+	for _, expr := range exprs {
+		ident, ok := expr.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		collector.declareAnyInCurrentScopeFromIdent(ident)
+	}
+}
+
 func (collector *anyUsageCollector) inspectControlStmtNode(node ast.Node, owner string) bool {
 	switch typed := node.(type) {
 	case *ast.IfStmt:
+		collector.openScope()
+		defer collector.closeScope()
+
 		collector.inspectNode(typed.Init, owner)
 		collector.inspectNode(typed.Cond, owner)
 		collector.inspectNode(typed.Body, owner)
 		collector.inspectNode(typed.Else, owner)
 	case *ast.SwitchStmt:
+		collector.openScope()
+		defer collector.closeScope()
+
 		collector.inspectNode(typed.Init, owner)
 		collector.inspectNode(typed.Tag, owner)
 		collector.inspectNode(typed.Body, owner)
 	case *ast.TypeSwitchStmt:
+		collector.openScope()
+		defer collector.closeScope()
+
 		collector.inspectNode(typed.Init, owner)
 		collector.inspectNode(typed.Assign, owner)
 		collector.inspectTypeSwitchBody(typed.Body, owner)
 	case *ast.CaseClause:
 		collector.inspectExprs(typed.List, owner)
+		collector.openScope()
+		defer collector.closeScope()
+
 		collector.inspectStmts(typed.Body, owner)
 	case *ast.CommClause:
+		collector.openScope()
+		defer collector.closeScope()
+
 		collector.inspectNode(typed.Comm, owner)
 		collector.inspectStmts(typed.Body, owner)
 	case *ast.SelectStmt:
 		collector.inspectNode(typed.Body, owner)
 	case *ast.ForStmt:
+		collector.openScope()
+		defer collector.closeScope()
+
 		collector.inspectNode(typed.Init, owner)
 		collector.inspectNode(typed.Cond, owner)
 		collector.inspectNode(typed.Post, owner)
 		collector.inspectNode(typed.Body, owner)
 	case *ast.RangeStmt:
-		collector.inspectNode(typed.Key, owner)
-		collector.inspectNode(typed.Value, owner)
-		collector.inspectNode(typed.X, owner)
+		collector.openScope()
+		defer collector.closeScope()
+
+		collector.inspectRangeStmt(typed, owner)
 		collector.inspectNode(typed.Body, owner)
 	default:
 		return false
 	}
 	return true
+}
+
+func (collector *anyUsageCollector) inspectRangeStmt(stmt *ast.RangeStmt, owner string) {
+	if stmt == nil {
+		return
+	}
+
+	collector.inspectNode(stmt.X, owner)
+	if stmt.Tok == token.DEFINE {
+		collector.inspectRangeDefineLHS(stmt, owner)
+		collector.declareRangeNames(stmt)
+		return
+	}
+
+	collector.inspectNode(stmt.Key, owner)
+	collector.inspectNode(stmt.Value, owner)
+}
+
+func (collector *anyUsageCollector) inspectRangeDefineLHS(stmt *ast.RangeStmt, owner string) {
+	if stmt.Key != nil {
+		collector.inspectShortVarDeclLHS([]ast.Expr{stmt.Key}, owner)
+	}
+	if stmt.Value != nil {
+		collector.inspectShortVarDeclLHS([]ast.Expr{stmt.Value}, owner)
+	}
+}
+
+func (collector *anyUsageCollector) declareRangeNames(stmt *ast.RangeStmt) {
+	if stmt.Key != nil {
+		collector.declareShortVarNames([]ast.Expr{stmt.Key})
+	}
+	if stmt.Value != nil {
+		collector.declareShortVarNames([]ast.Expr{stmt.Value})
+	}
 }
 
 func (collector *anyUsageCollector) inspectTypeSwitchBody(body *ast.BlockStmt, owner string) {
@@ -1460,7 +1850,9 @@ func (collector *anyUsageCollector) inspectTypeSwitchBody(body *ast.BlockStmt, o
 			collector.inspectNode(stmt, owner)
 			continue
 		}
+		collector.openScope()
 		collector.inspectStmts(clause.Body, owner)
+		collector.closeScope()
 	}
 }
 

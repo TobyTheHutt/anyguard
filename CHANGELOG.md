@@ -15,6 +15,7 @@ The format is based on Keep a Changelog, with the current development state trac
 ### Changed
 
 - Precompiled `exclude_globs` once per allowlist/config load and reused the compiled matchers during file filtering, preserving existing `*`, `**`, and `?` matching semantics while removing regex compilation from the hot path. (@TobyTheHutt)
+- Switched supported-slot `any` matching from `types.Info` dependence to lexical scope resolution (including shadowing behavior), and aligned analyzer/docs/tests with that contract. (@TobyTheHutt)
 
 ### Fixed
 
