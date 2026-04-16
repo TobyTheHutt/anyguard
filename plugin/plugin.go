@@ -94,7 +94,7 @@ func (p *ModulePlugin) BuildAnalyzers() ([]*analysis.Analyzer, error) {
 
 // GetLoadMode declares the package loading mode required by this analyzer.
 func (p *ModulePlugin) GetLoadMode() string {
-	return register.LoadModeTypesInfo
+	return register.LoadModeSyntax
 }
 
 func normalizeRoots(roots []string) []string {

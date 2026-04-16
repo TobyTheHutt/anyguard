@@ -189,7 +189,7 @@ Nested `any` is reportable only when the nested identifier still appears in one 
 - Analyzer/plugin path: the CLI (`cmd/anyguard`), public analyzer (`anyguard.NewAnalyzer()`), and golangci-lint module plugin all run as `go/analysis` frontends. Each pass emits diagnostics only for findings in the package currently under analysis after applying the configured roots and `exclude_globs` to the same canonical repository-relative file identities used by repo-wide allowlist resolution.
 - Repo-wide stale-selector validation still happens on that path. Allowlist resolution is built from repo-wide findings across the configured roots, cached once per process, and reused by later analyzer/plugin passes so stale selectors anywhere under those roots still fail closed.
 - Audit path: the repo-wide validation helper used by this repository's tests and benchmarks walks the configured roots once, applies the active Go build context (`//go:build`, `GOOS`, `GOARCH`, `GOFLAGS=-tags=...`, file suffix constraints, and `CGO_ENABLED`), and returns the full repo violation set in a single call. That is the canonical whole-repo audit path.
-- Performance tradeoff: analyzer/plugin execution avoids rescanning the repo for every package pass, but it still pays one repo-wide allowlist-validation cost and, for analyzer/plugin frontends, per-package `typesinfo` loading. The audit path does one full repo walk and is the reference whole-repo measurement path.
+- Performance tradeoff: analyzer/plugin execution avoids rescanning the repo for every package pass. On the golangci-lint module-plugin path, `anyguard` uses syntax package loading. Supported-slot matching, shadowed-`any` suppression, and repo-wide stale-selector validation read parsed syntax plus lexical scope state rather than `types.Info`. The audit path does one full repo walk and is the reference whole-repo measurement path.
 
 ### Development
 
@@ -227,7 +227,7 @@ The benchmark suite includes `ValidateAnyUsage`, repo-wide finding collection an
 - Stable plugin import path: `github.com/tobythehutt/anyguard/v2/plugin`
 - Plugin name in `.golangci.yml`: `anyguard`
 - Plugin diagnostics follow the same deterministic ordering contract as the CLI and public analyzer.
-- The module plugin requests golangci-lint `typesinfo` load mode for the current release, although supported-slot matching uses lexical scope resolution.
+- The module plugin requests golangci-lint `syntax` load mode. Supported-slot matching, shadowed-`any` suppression, and repo-wide stale-selector validation use parsed syntax plus lexical scope resolution rather than `types.Info`.
 - The module plugin reports diagnostics for the current package only. Repo-wide allowlist and stale-selector validation are shared across the golangci-lint process and are not redone as a whole-repo audit for every package.
 - Integration docs and examples: `docs/golangci-lint/README.md`
 - Upstream readiness notes: `docs/golangci-lint/README.md#upstream-readiness`
