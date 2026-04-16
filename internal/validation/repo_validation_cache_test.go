@@ -21,6 +21,12 @@ const (
 	testCacheFingerprintA = "fingerprint-a"
 	testCacheFingerprintB = "fingerprint-b"
 	testProcessCacheKey   = "wrong-type"
+	testCachePackagePath  = "pkg/api"
+	testCacheInternalGlob = "internal/**"
+	testCacheGoTestGlob   = "**/*_test.go"
+	testCacheAlphaPath    = "pkg/alpha/payload.go"
+	testCacheZetaPath     = "pkg/zeta/payload.go"
+	testCacheAlphaCode    = "type Payload map[any]any"
 
 	errExpectedRepresentativeSnapshot = "expected one representative snapshot, got %d"
 )
@@ -34,14 +40,14 @@ func TestNewRepoValidationCacheKeyNormalizesInputs(t *testing.T) {
 		repoRoot,
 		[]string{"./...", filepath.Join(base, testCacheRepoName, testDirPkg, testDirAPI)},
 		testCacheFingerprintA,
-		[]string{" ./internal/** ", "**/*_test.go"},
+		[]string{" ./" + testCacheInternalGlob + " ", testCacheGoTestGlob},
 		buildKeyA,
 	)
 	keyB := newRepoValidationCacheKey(
 		filepath.Join(base, testCacheRepoName),
-		[]string{"pkg/api", "."},
+		[]string{testCachePackagePath, "."},
 		testCacheFingerprintA,
-		[]string{"**/*_test.go", "internal/**"},
+		[]string{testCacheGoTestGlob, testCacheInternalGlob},
 		buildKeyB,
 	)
 
@@ -51,9 +57,9 @@ func TestNewRepoValidationCacheKeyNormalizesInputs(t *testing.T) {
 
 	keyC := newRepoValidationCacheKey(
 		filepath.Join(base, testCacheRepoName),
-		[]string{"pkg/api", "."},
+		[]string{testCachePackagePath, "."},
 		testCacheFingerprintB,
-		[]string{"**/*_test.go", "internal/**"},
+		[]string{testCacheGoTestGlob, testCacheInternalGlob},
 		buildKeyA,
 	)
 	if keyA == keyC {
@@ -62,9 +68,9 @@ func TestNewRepoValidationCacheKeyNormalizesInputs(t *testing.T) {
 
 	keyD := newRepoValidationCacheKey(
 		filepath.Join(base, testCacheRepoName),
-		[]string{"pkg/api", "."},
+		[]string{testCachePackagePath, "."},
 		testCacheFingerprintA,
-		[]string{"**/*_test.go", "internal/**"},
+		[]string{testCacheGoTestGlob, testCacheInternalGlob},
 		buildContextCacheKey(testBuildContext(testGOOSLinux, testGOARCHAMD64, testBuildTagCustom)),
 	)
 	if keyA == keyD {
@@ -80,14 +86,14 @@ func TestRepoValidationCacheReusesNormalizedKey(t *testing.T) {
 		filepath.Join(base, testCacheRepoName, "."),
 		[]string{"./...", filepath.Join(base, testCacheRepoName, testDirPkg, testDirAPI)},
 		testCacheFingerprintA,
-		[]string{" ./internal/** ", "**/*_test.go"},
+		[]string{" ./" + testCacheInternalGlob + " ", testCacheGoTestGlob},
 		buildContextCacheKey(testBuildContext(testGOOSLinux, testGOARCHAMD64, testBuildTagCustom)),
 	)
 	keyB := newRepoValidationCacheKey(
 		filepath.Join(base, testCacheRepoName),
-		[]string{"pkg/api", "."},
+		[]string{testCachePackagePath, "."},
 		testCacheFingerprintA,
-		[]string{"**/*_test.go", "internal/**"},
+		[]string{testCacheGoTestGlob, testCacheInternalGlob},
 		buildContextCacheKey(testBuildContext(testGOOSLinux, testGOARCHAMD64, testBuildTagCustom)),
 	)
 
@@ -125,13 +131,45 @@ func TestRepoValidationCacheReusesNormalizedKey(t *testing.T) {
 	}
 }
 
+func TestNewRepoValidationResultIndexesFindingsByCanonicalFilePath(t *testing.T) {
+	findings := []collectedFinding{
+		testCollectedFinding(testCacheAlphaPath, testOwnerPayload, anyCategoryMapTypeKey, 2, 18, testCacheAlphaCode, false),
+		testCollectedFinding(testCacheAlphaPath, testOwnerPayload, anyCategoryMapTypeValue, 2, 22, testCacheAlphaCode, false),
+		testCollectedFinding(testCacheZetaPath, testOwnerLater, anyCategoryCallExprFun, 4, 19, "_ = any(value)", false),
+	}
+
+	result := newRepoValidationResult(findings, anyAllowlistIndex{})
+	alphaFindings := result.findingsForFile(testCacheAlphaPath)
+	zetaFindings := result.findingsForFile(testCacheZetaPath)
+	basenameFindings := result.findingsForFile(testPayloadFile)
+
+	alphaWant := []violationSummary{
+		{file: testCacheAlphaPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeKey), line: 2, column: 18},
+		{file: testCacheAlphaPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeValue), line: 2, column: 22},
+	}
+	if got := collectFindingSummaries(alphaFindings); !reflect.DeepEqual(got, alphaWant) {
+		t.Fatalf("unexpected alpha cached findings: got %#v want %#v", got, alphaWant)
+	}
+
+	zetaWant := []violationSummary{
+		{file: testCacheZetaPath, owner: testOwnerLater, category: string(anyCategoryCallExprFun), line: 4, column: 19},
+	}
+	if got := collectFindingSummaries(zetaFindings); !reflect.DeepEqual(got, zetaWant) {
+		t.Fatalf("unexpected zeta cached findings: got %#v want %#v", got, zetaWant)
+	}
+
+	if len(basenameFindings) != 0 {
+		t.Fatalf("expected basename lookup to stay empty, got %#v", collectFindingSummaries(basenameFindings))
+	}
+}
+
 func TestRepoValidationCacheReusesFailures(t *testing.T) {
 	var cache repoValidationCache
 	key := newRepoValidationCacheKey(
 		filepath.Join(t.TempDir(), testCacheRepoName),
 		[]string{DefaultRoots},
 		testCacheFingerprintA,
-		[]string{"**/*_test.go"},
+		[]string{testCacheGoTestGlob},
 		buildContextCacheKey(testBuildContext(testGOOSLinux, testGOARCHAMD64, testBuildTagCustom)),
 	)
 
@@ -258,7 +296,7 @@ func TestRepoValidationCacheConcurrentAccessCollapsesMisses(t *testing.T) {
 		filepath.Join(t.TempDir(), testCacheRepoName),
 		[]string{DefaultRoots},
 		testCacheFingerprintA,
-		[]string{"**/*_test.go"},
+		[]string{testCacheGoTestGlob},
 		buildContextCacheKey(testBuildContext(testGOOSLinux, testGOARCHAMD64, testBuildTagCustom)),
 	)
 

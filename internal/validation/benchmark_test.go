@@ -147,8 +147,8 @@ func BenchmarkAnalyzerRun(b *testing.B) {
 		benchmarkAnalyzerRunReused(b, cfg, preloadedSnapshot)
 	})
 
-	b.Run(fixtureName+"/reused-pass-reset-cache", func(b *testing.B) {
-		benchmarkAnalyzerRunReusedResetCache(b, cfg, preloadedSnapshot)
+	b.Run(fixtureName+"/reused-pass-after-repo-cache-warm-up", func(b *testing.B) {
+		benchmarkAnalyzerRunReusedAfterRepoCacheWarmUp(b, cfg, preloadedSnapshot)
 	})
 }
 
@@ -219,7 +219,7 @@ func benchmarkAnalyzerRunCold(b *testing.B, cfg *analyzerConfig, fixture benchte
 	}
 }
 
-func benchmarkAnalyzerRunReused(b *testing.B, cfg *analyzerConfig, snapshot benchtest.PackageSnapshot) {
+func benchmarkAnalyzerRunReusedAfterRepoCacheWarmUp(b *testing.B, cfg *analyzerConfig, snapshot benchtest.PackageSnapshot) {
 	b.Helper()
 	b.ReportAllocs()
 
@@ -254,13 +254,14 @@ func benchmarkAnalyzerRunReused(b *testing.B, cfg *analyzerConfig, snapshot benc
 	}
 }
 
-func benchmarkAnalyzerRunReusedResetCache(b *testing.B, cfg *analyzerConfig, snapshot benchtest.PackageSnapshot) {
+func benchmarkAnalyzerRunReused(b *testing.B, cfg *analyzerConfig, snapshot benchtest.PackageSnapshot) {
 	b.Helper()
 	b.ReportAllocs()
 
 	// Reset the process-wide repo cache each loop to preserve an uncached baseline
-	// alongside the warm repeated-pass measurement above.
+	// while still reusing the same prepared pass inputs.
 	pass := benchtest.NewPass(snapshot, NewAnalyzer(), nil)
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		resetProcessRepoValidationCacheForTesting()
 

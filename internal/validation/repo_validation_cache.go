@@ -12,7 +12,21 @@ import (
 )
 
 type repoValidationResult struct {
-	index anyAllowlistIndex
+	// findings stays sorted in canonical diagnostic order so analyzer passes can
+	// reuse repo-wide collection for package-local reporting without recollecting
+	// AST slots from the current pass. Callers must treat findings and any slices
+	// derived from findingsForFile as read-only views over cached state.
+	findings []collectedFinding
+	// fileRanges indexes contiguous finding spans by canonical repo-relative file
+	// path. Lookups stay exact and never fall back to basename or package-name
+	// heuristics.
+	fileRanges map[string]repoValidationFindingRange
+	index      anyAllowlistIndex
+}
+
+type repoValidationFindingRange struct {
+	start int
+	end   int
 }
 
 // repoValidationConfig freezes analyzer-wide inputs that are identical across
@@ -170,7 +184,58 @@ func collectRepoValidationResultWithBuildContext(
 		return repoValidationResult{}, err
 	}
 
-	return repoValidationResult{index: index}, nil
+	return newRepoValidationResult(findings, index), nil
+}
+
+func newRepoValidationResult(findings []collectedFinding, index anyAllowlistIndex) repoValidationResult {
+	// File-span indexing depends on canonical finding order. Normalize once when
+	// the cached repo result is materialized.
+	sortCollectedFindings(findings)
+
+	return repoValidationResult{
+		findings:   findings,
+		fileRanges: indexRepoValidationFindingRanges(findings),
+		index:      index,
+	}
+}
+
+func indexRepoValidationFindingRanges(findings []collectedFinding) map[string]repoValidationFindingRange {
+	if len(findings) == 0 {
+		return nil
+	}
+
+	fileRanges := make(map[string]repoValidationFindingRange)
+	start := 0
+	for start < len(findings) {
+		filePath := findings[start].identity.File
+		end := start + 1
+		for end < len(findings) {
+			nextFilePath := findings[end].identity.File
+			if nextFilePath != filePath {
+				break
+			}
+			end++
+		}
+
+		fileRanges[filePath] = repoValidationFindingRange{
+			start: start,
+			end:   end,
+		}
+		start = end
+	}
+
+	return fileRanges
+}
+
+func (result repoValidationResult) findingsForFile(relPath string) []collectedFinding {
+	findingRange, ok := result.fileRanges[relPath]
+	if !ok {
+		return nil
+	}
+
+	// Return a read-only view to preserve the cached hot path without extra per-
+	// pass copying. Callers must not mutate the returned slice.
+	return result.findings[findingRange.start:findingRange.end]
 }
 
 func newRepoValidationCacheKey(

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -106,19 +107,17 @@ func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	packageFindings, err := collectAnalyzerFindings(pass, files)
-	if err != nil {
-		return nil, err
-	}
 
-	// collectAnalyzerFindings builds packageFindings for current-package diagnostics,
-	// while repo-wide validation is cached across analyzer passes in the same process.
+	// Repo-wide collection now serves both allowlist resolution and package-local
+	// diagnostics. Each pass filters cached findings by canonical repo-relative
+	// file path instead of recollecting AST-slot findings from pass syntax.
 	repoResult, err := cfg.loadRepoValidationResult(validationConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	reportViolations(pass, collectAnalyzerViolations(files, packageFindings, repoResult.index))
+	cachedViolations := collectCachedAnalyzerViolations(files, repoResult)
+	reportViolations(pass, cachedViolations)
 	return analysisResult{}, nil
 }
 
@@ -305,6 +304,82 @@ func collectAnalyzerFindings(pass *analysis.Pass, files []analyzerFile) ([]colle
 	}
 	sortCollectedFindings(findings)
 	return findings, nil
+}
+
+func collectCachedAnalyzerViolations(files []analyzerFile, repoResult repoValidationResult) []analyzerViolation {
+	if len(files) == 0 {
+		return nil
+	}
+
+	capacity := countCachedAnalyzerFindings(files, repoResult)
+	if capacity == 0 {
+		return nil
+	}
+
+	reportable := make([]analyzerViolation, 0, capacity)
+	for _, file := range files {
+		fileFindings := repoResult.findingsForFile(file.relPath)
+		reportable = appendAnalyzerViolations(reportable, file.tokenFile, fileFindings, repoResult.index)
+	}
+
+	sortAnalyzerViolations(reportable)
+	return reportable
+}
+
+func countCachedAnalyzerFindings(files []analyzerFile, repoResult repoValidationResult) int {
+	total := 0
+	for _, file := range files {
+		fileFindings := repoResult.findingsForFile(file.relPath)
+		total += len(fileFindings)
+	}
+	return total
+}
+
+func appendAnalyzerViolations(
+	reportable []analyzerViolation,
+	tokenFile *token.File,
+	findings []collectedFinding,
+	index anyAllowlistIndex,
+) []analyzerViolation {
+	for _, finding := range findings {
+		isSuppressed := finding.suppressedByNolint
+		if isSuppressed {
+			continue
+		}
+
+		isAllowed := index.isAllowed(finding.identity)
+		if isAllowed {
+			continue
+		}
+
+		violation := newViolation(finding)
+		reportable = append(reportable, analyzerViolation{
+			tokenFile: tokenFile,
+			violation: violation,
+		})
+	}
+
+	return reportable
+}
+
+func sortAnalyzerViolations(violations []analyzerViolation) {
+	sort.Slice(violations, func(i, j int) bool {
+		left := violations[i].violation
+		right := violations[j].violation
+
+		switch {
+		case left.File != right.File:
+			return left.File < right.File
+		case left.Line != right.Line:
+			return left.Line < right.Line
+		case left.Column != right.Column:
+			return left.Column < right.Column
+		case left.Identity.Category != right.Identity.Category:
+			return left.Identity.Category < right.Identity.Category
+		default:
+			return left.Identity.Owner < right.Identity.Owner
+		}
+	})
 }
 
 func analyzerResolverFiles(pass *analysis.Pass, files []analyzerFile) []*ast.File {

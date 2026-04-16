@@ -38,6 +38,7 @@ const (
 	testShadowedQuiet         = "expected shadowed any to stay quiet, got %#v"
 	testExpectedAnalyzablePkg = "expected at least one analyzable package variant"
 	testGoTestMainPath        = "pkg/api.test"
+	testReportPath            = "pkg/report.go"
 	testGoModSource           = "module example.com/repro\n\ngo 1.22\n"
 	testAllowlistYAML         = "version: 2\nexclude_globs:\n  - \"**/*_test.go\"\nentries: []\n"
 	testPayloadTestRel        = "pkg/api/payload_test.go"
@@ -489,17 +490,34 @@ func TestCollectAnalyzerViolationsSortsAcrossFileOrder(t *testing.T) {
 	}
 
 	reportable := collectAnalyzerViolations(files, findings, anyAllowlistIndex{})
-	got := make([]violationSummary, 0, len(reportable))
-	for _, entry := range reportable {
-		got = append(got, violationSummary{
-			file:     entry.violation.Identity.File,
-			owner:    entry.violation.Identity.Owner,
-			category: entry.violation.Identity.Category,
-			line:     entry.violation.Line,
-			column:   entry.violation.Column,
-		})
+	assertAnalyzerViolationOrder(t, reportable)
+}
+
+func TestCollectCachedAnalyzerViolationsSortsAcrossFileOrder(t *testing.T) {
+	fset := token.NewFileSet()
+	alphaFile := parseAnalyzerTokenFile(t, fset, testAlphaPayloadPath, testAlphaPayloadSource)
+	zetaFile := parseAnalyzerTokenFile(t, fset, testZetaLaterPath, testZetaLaterSource)
+
+	files := []analyzerFile{
+		{relPath: testZetaLaterPath, tokenFile: zetaFile},
+		{relPath: testAlphaPayloadPath, tokenFile: alphaFile},
+	}
+	findings := []collectedFinding{
+		{identity: newFindingIdentity(testZetaLaterPath, testOwnerLater, anyCategoryCallExprFun, 2, 31), line: 2, column: 31},
+		{identity: newFindingIdentity(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeValue, 2, 22), line: 2, column: 22},
+		{identity: newFindingIdentity(testAlphaPayloadPath, testOwnerPayload, anyCategoryMapTypeKey, 2, 18), line: 2, column: 18},
+		{identity: newFindingIdentity(testZetaLaterPath, testOwnerLater, anyCategoryCallExprFun, 2, 23), line: 2, column: 23},
 	}
 
+	repoResult := newRepoValidationResult(findings, anyAllowlistIndex{})
+	reportable := collectCachedAnalyzerViolations(files, repoResult)
+	assertAnalyzerViolationOrder(t, reportable)
+}
+
+func assertAnalyzerViolationOrder(t *testing.T, reportable []analyzerViolation) {
+	t.Helper()
+
+	got := collectAnalyzerViolationSummaries(reportable)
 	want := []violationSummary{
 		{file: testAlphaPayloadPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeKey), line: 2, column: 18},
 		{file: testAlphaPayloadPath, owner: testOwnerPayload, category: string(anyCategoryMapTypeValue), line: 2, column: 22},
@@ -511,9 +529,23 @@ func TestCollectAnalyzerViolationsSortsAcrossFileOrder(t *testing.T) {
 	}
 }
 
+func collectAnalyzerViolationSummaries(reportable []analyzerViolation) []violationSummary {
+	summaries := make([]violationSummary, 0, len(reportable))
+	for _, entry := range reportable {
+		summaries = append(summaries, violationSummary{
+			file:     entry.violation.Identity.File,
+			owner:    entry.violation.Identity.Owner,
+			category: entry.violation.Identity.Category,
+			line:     entry.violation.Line,
+			column:   entry.violation.Column,
+		})
+	}
+	return summaries
+}
+
 func TestReportViolationUsesLineAndColumn(t *testing.T) {
 	fset := token.NewFileSet()
-	tokenFile := parseAnalyzerTokenFile(t, fset, "pkg/report.go", "package pkg\nfunc Use() { _ = any(1) }\n")
+	tokenFile := parseAnalyzerTokenFile(t, fset, testReportPath, "package pkg\nfunc Use() { _ = any(1) }\n")
 
 	var reported analysis.Diagnostic
 	pass := &analysis.Pass{
@@ -524,12 +556,12 @@ func TestReportViolationUsesLineAndColumn(t *testing.T) {
 	}
 
 	reportViolation(pass, tokenFile, Error{
-		File:    "pkg/report.go",
+		File:    testReportPath,
 		Line:    2,
 		Column:  18,
 		Message: "test diagnostic",
 		Identity: FindingIdentity{
-			File:     "pkg/report.go",
+			File:     testReportPath,
 			Owner:    "Use",
 			Category: string(anyCategoryCallExprFun),
 			Line:     2,
