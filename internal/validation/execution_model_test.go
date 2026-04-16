@@ -90,6 +90,7 @@ func TestAnalyzerRunReportsPackageLocalDiagnosticsAndReusesRepoValidation(t *tes
 				config.repoRoot,
 				config.roots,
 				config.allowlist,
+				config.excludeGlobs,
 				config.buildCtx,
 			)
 		})

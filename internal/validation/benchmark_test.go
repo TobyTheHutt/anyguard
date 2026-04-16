@@ -70,6 +70,29 @@ func BenchmarkCollectFindings(b *testing.B) {
 	})
 }
 
+func BenchmarkExcludeGlobMatching(b *testing.B) {
+	globs := benchmarkExcludeGlobs()
+	paths := benchmarkExcludePaths()
+	compiledGlobs, err := compileExcludeGlobs(globs)
+	if err != nil {
+		b.Fatalf("compile benchmark exclude globs: %v", err)
+	}
+
+	b.Run("old-compile-regex-per-path", func(b *testing.B) {
+		b.ReportAllocs()
+		benchmarkExcludeMatchCount = benchmarkExcludeMatching(b, paths, func(path string) bool {
+			return benchmarkShouldExcludeUncompiled(path, globs)
+		})
+	})
+
+	b.Run("new-reuse-compiled-regex", func(b *testing.B) {
+		b.ReportAllocs()
+		benchmarkExcludeMatchCount = benchmarkExcludeMatching(b, paths, func(path string) bool {
+			return shouldExclude(path, compiledGlobs)
+		})
+	})
+}
+
 func BenchmarkResolveAllowlistIndex(b *testing.B) {
 	fixture := benchtest.CreateSyntheticRepo(b, benchtest.DefaultSyntheticRepoConfig())
 	allowlist := benchmarkAllowlist(fixture.Selectors)
@@ -252,4 +275,56 @@ func benchmarkAnalyzerRunReusedResetCache(b *testing.B, cfg *analyzerConfig, sna
 			b.Fatal(errExpectedAnalyzerDiagnostics)
 		}
 	}
+}
+
+var benchmarkExcludeMatchCount int
+
+func benchmarkExcludeGlobs() []string {
+	return []string{
+		"**/*_test.go",
+		"pkg/**/generated?.go",
+		"pkg/**/fixture*.go",
+		"internal/tmp/**",
+		"cmd/*/mock?.go",
+	}
+}
+
+func benchmarkExcludePaths() []string {
+	return []string{
+		"pkg/api/foo.go",
+		"pkg/api/foo_test.go",
+		"pkg/api/internal/generated1.go",
+		"pkg/service/fixture_alpha.go",
+		"internal/tmp/cache/value.go",
+		"cmd/anyguard/mock1.go",
+		"cmd/anyguard/main.go",
+	}
+}
+
+func benchmarkExcludeMatching(b *testing.B, paths []string, match func(string) bool) int {
+	b.Helper()
+
+	matches := 0
+	for i := 0; i < b.N; i++ {
+		pathIndex := i % len(paths)
+		path := paths[pathIndex]
+		if match(path) {
+			matches++
+		}
+	}
+	return matches
+}
+
+func benchmarkShouldExcludeUncompiled(relPath string, globs []string) bool {
+	for _, glob := range globs {
+		if glob == "" {
+			continue
+		}
+
+		matched, err := matchGlob(glob, relPath)
+		if err == nil && matched {
+			return true
+		}
+	}
+	return false
 }

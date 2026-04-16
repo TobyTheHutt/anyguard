@@ -105,8 +105,9 @@ type AnyAllowlistEntry struct {
 }
 
 type loadedAnyAllowlist struct {
-	allowlist   AnyAllowlist
-	fingerprint string
+	allowlist    AnyAllowlist
+	excludeGlobs compiledExcludeGlobs
+	fingerprint  string
 }
 
 // LoadAnyAllowlist reads and validates a YAML any-usage allowlist file.
@@ -130,9 +131,15 @@ func loadAnyAllowlist(listPath string) (loadedAnyAllowlist, error) {
 		return loadedAnyAllowlist{}, err
 	}
 
+	excludeGlobs, err := compileExcludeGlobs(allowlist.ExcludeGlobs)
+	if err != nil {
+		return loadedAnyAllowlist{}, err
+	}
+
 	return loadedAnyAllowlist{
-		allowlist:   allowlist,
-		fingerprint: fingerprintAnyAllowlistData(data),
+		allowlist:    allowlist,
+		excludeGlobs: excludeGlobs,
+		fingerprint:  fingerprintAnyAllowlistData(data),
 	}, nil
 }
 
@@ -166,11 +173,11 @@ func wrapAllowlistParseError(err error) error {
 
 // ValidateAnyUsageFromFile loads an allowlist and validates any-usage across roots.
 func ValidateAnyUsageFromFile(listPath, baseDir string, roots []string) ([]Error, error) {
-	allowlist, err := LoadAnyAllowlist(listPath)
+	loaded, err := loadAnyAllowlist(listPath)
 	if err != nil {
 		return nil, err
 	}
-	return ValidateAnyUsage(allowlist, baseDir, roots)
+	return validateAnyUsageWithValidatedAllowlist(loaded.allowlist, loaded.excludeGlobs, baseDir, roots)
 }
 
 // ValidateAnyUsage reports any-type usages not covered by the provided allowlist.
@@ -182,12 +189,30 @@ func ValidateAnyUsage(allowlist AnyAllowlist, baseDir string, roots []string) ([
 		return nil, err
 	}
 
+	excludeGlobs, err := compileExcludeGlobs(allowlist.ExcludeGlobs)
+	if err != nil {
+		return nil, err
+	}
+	return validateAnyUsageWithValidatedAllowlist(allowlist, excludeGlobs, baseDir, roots)
+}
+
+func validateAnyUsageWithValidatedAllowlist(
+	allowlist AnyAllowlist,
+	excludeGlobs compiledExcludeGlobs,
+	baseDir string,
+	roots []string,
+) ([]Error, error) {
+	if len(roots) == 0 {
+		return nil, errors.New(errNoRootsProvided)
+	}
+
 	baseAbs, err := filepath.Abs(baseDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve base dir: %w", err)
 	}
 
-	findings, err := collectFindings(baseAbs, roots, allowlist.ExcludeGlobs)
+	buildCtx := currentBuildContext()
+	findings, err := collectFindingsWithCompiledExcludeGlobs(baseAbs, roots, excludeGlobs, buildCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -205,6 +230,19 @@ func collectFindings(baseAbs string, roots, globs []string) ([]collectedFinding,
 }
 
 func collectFindingsWithBuildContext(baseAbs string, roots, globs []string, buildCtx *build.Context) ([]collectedFinding, error) {
+	excludeGlobs, err := compileExcludeGlobs(globs)
+	if err != nil {
+		return nil, err
+	}
+	return collectFindingsWithCompiledExcludeGlobs(baseAbs, roots, excludeGlobs, buildCtx)
+}
+
+func collectFindingsWithCompiledExcludeGlobs(
+	baseAbs string,
+	roots []string,
+	excludeGlobs compiledExcludeGlobs,
+	buildCtx *build.Context,
+) ([]collectedFinding, error) {
 	if buildCtx == nil {
 		buildCtx = currentBuildContext()
 	}
@@ -219,7 +257,7 @@ func collectFindingsWithBuildContext(baseAbs string, roots, globs []string, buil
 			continue
 		}
 
-		rootFindings, err := collectRootFindings(rootPath, baseAbs, globs, buildCtx)
+		rootFindings, err := collectRootFindings(rootPath, baseAbs, excludeGlobs, buildCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -229,8 +267,13 @@ func collectFindingsWithBuildContext(baseAbs string, roots, globs []string, buil
 	return findings, nil
 }
 
-func collectRootFindings(rootPath, baseAbs string, globs []string, buildCtx *build.Context) ([]collectedFinding, error) {
-	parsed, err := collectParsedPackages(rootPath, baseAbs, globs, buildCtx)
+func collectRootFindings(
+	rootPath string,
+	baseAbs string,
+	excludeGlobs compiledExcludeGlobs,
+	buildCtx *build.Context,
+) ([]collectedFinding, error) {
+	parsed, err := collectParsedPackages(rootPath, baseAbs, excludeGlobs, buildCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +313,7 @@ type parsedPackage struct {
 
 func collectParsedPackages(
 	rootPath, baseAbs string,
-	globs []string,
+	excludeGlobs compiledExcludeGlobs,
 	buildCtx *build.Context,
 ) (parsedPackageCollection, error) {
 	fset := token.NewFileSet()
@@ -279,7 +322,7 @@ func collectParsedPackages(
 		buildCtx = currentBuildContext()
 	}
 
-	err := walkParsedFiles(rootPath, baseAbs, globs, fset, buildCtx, func(file parsedGoFile) error {
+	err := walkParsedFiles(rootPath, baseAbs, excludeGlobs, fset, buildCtx, func(file parsedGoFile) error {
 		appendParsedPackageFile(grouped, file)
 		return nil
 	})
@@ -292,13 +335,13 @@ func collectParsedPackages(
 
 func walkParsedFiles(
 	rootPath, baseAbs string,
-	globs []string,
+	excludeGlobs compiledExcludeGlobs,
 	fset *token.FileSet,
 	buildCtx *build.Context,
 	visit func(parsedGoFile) error,
 ) error {
 	return filepath.WalkDir(rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
-		parsedFile, keep, err := parseRootFile(fset, path, entry, walkErr, baseAbs, globs, buildCtx)
+		parsedFile, keep, err := parseRootFile(fset, path, entry, walkErr, baseAbs, excludeGlobs, buildCtx)
 		if err != nil {
 			return err
 		}
@@ -356,7 +399,7 @@ func parseRootFile(
 	entry fs.DirEntry,
 	walkErr error,
 	baseAbs string,
-	globs []string,
+	excludeGlobs compiledExcludeGlobs,
 	buildCtx *build.Context,
 ) (parsedGoFile, bool, error) {
 	if walkErr != nil {
@@ -371,7 +414,7 @@ func parseRootFile(
 		return parsedGoFile{}, false, relErr
 	}
 	relPath = normalizePath(relPath)
-	if shouldExclude(relPath, globs) {
+	if shouldExclude(relPath, excludeGlobs) {
 		return parsedGoFile{}, false, nil
 	}
 	keepForBuild, err := buildCtx.MatchFile(filepath.Dir(path), filepath.Base(path))
@@ -1461,13 +1504,45 @@ func receiverTypeName(expr ast.Expr) string {
 	}
 }
 
-func shouldExclude(relPath string, globs []string) bool {
-	for _, glob := range globs {
-		if glob == "" {
+// compiledExcludeGlobs keeps exclude patterns in allowlist order while moving
+// regex compilation out of per-file filtering.
+type compiledExcludeGlobs struct {
+	matchers []compiledGlobMatcher
+}
+
+type compiledGlobMatcher struct {
+	pattern string
+	regex   *regexp.Regexp
+}
+
+// compileExcludeGlobs reports the first compilation failure with its YAML list
+// index so invalid configuration fails closed deterministically.
+func compileExcludeGlobs(globs []string) (compiledExcludeGlobs, error) {
+	matchers := make([]compiledGlobMatcher, 0, len(globs))
+	for i, glob := range globs {
+		normalizedGlob := normalizePath(glob)
+		if normalizedGlob == "" {
 			continue
 		}
-		matched, err := matchGlob(glob, relPath)
-		if err == nil && matched {
+
+		matcher, err := compileGlobMatcher(normalizedGlob)
+		if err != nil {
+			return compiledExcludeGlobs{}, fmt.Errorf("compile exclude_globs[%d]: %w", i, err)
+		}
+
+		matchers = append(matchers, matcher)
+	}
+	return compiledExcludeGlobs{matchers: matchers}, nil
+}
+
+func shouldExclude(relPath string, globs compiledExcludeGlobs) bool {
+	return globs.matches(relPath)
+}
+
+func (globs compiledExcludeGlobs) matches(relPath string) bool {
+	normalizedPath := normalizePath(relPath)
+	for _, matcher := range globs.matchers {
+		if matcher.matchesNormalizedPath(normalizedPath) {
 			return true
 		}
 	}
@@ -1475,19 +1550,40 @@ func shouldExclude(relPath string, globs []string) bool {
 }
 
 func matchGlob(pattern, value string) (bool, error) {
-	pattern = normalizePath(pattern)
-	value = normalizePath(value)
+	matcher, err := compileGlobMatcher(pattern)
+	if err != nil {
+		return false, err
+	}
 
+	normalizedValue := normalizePath(value)
+	return matcher.matchesNormalizedPath(normalizedValue), nil
+}
+
+func compileGlobMatcher(pattern string) (compiledGlobMatcher, error) {
+	normalizedPattern := normalizePath(pattern)
+	expr := globRegexExpression(normalizedPattern)
+	regex, err := regexp.Compile(expr)
+	if err != nil {
+		return compiledGlobMatcher{}, fmt.Errorf("compile glob pattern %q: %w", normalizedPattern, err)
+	}
+	return compiledGlobMatcher{
+		pattern: normalizedPattern,
+		regex:   regex,
+	}, nil
+}
+
+func (matcher compiledGlobMatcher) matchesNormalizedPath(path string) bool {
+	return matcher.regex.MatchString(path)
+}
+
+func globRegexExpression(pattern string) string {
+	// Preserve the historical glob semantics exactly: `*` and `?` stay within a
+	// path segment, while `**` may cross slash boundaries.
 	escaped := regexp.QuoteMeta(pattern)
 	escaped = strings.ReplaceAll(escaped, `\*\*`, anyTokenMarker)
 	escaped = strings.ReplaceAll(escaped, `\*`, `[^/]*`)
 	escaped = strings.ReplaceAll(escaped, `\?`, `[^/]`)
 	escaped = strings.ReplaceAll(escaped, anyTokenMarker, ".*")
 
-	expr := "^" + escaped + "$"
-	re, err := regexp.Compile(expr)
-	if err != nil {
-		return false, err
-	}
-	return re.MatchString(value), nil
+	return "^" + escaped + "$"
 }

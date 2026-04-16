@@ -19,11 +19,12 @@ type repoValidationResult struct {
 // package passes. cacheKey carries the allowlist fingerprint used for exact
 // repo validation result reuse.
 type repoValidationConfig struct {
-	allowlist AnyAllowlist
-	buildCtx  *build.Context
-	cacheKey  repoValidationCacheKey
-	repoRoot  string
-	roots     []string
+	allowlist    AnyAllowlist
+	buildCtx     *build.Context
+	cacheKey     repoValidationCacheKey
+	excludeGlobs compiledExcludeGlobs
+	repoRoot     string
+	roots        []string
 }
 
 type repoValidationConfigCacheKey struct {
@@ -124,11 +125,12 @@ func collectRepoValidationConfig(
 		key.build,
 	)
 	return repoValidationConfig{
-		allowlist: allowlist,
-		buildCtx:  cloneBuildContext(buildCtx),
-		cacheKey:  cacheKey,
-		repoRoot:  key.repoRoot,
-		roots:     cloneStrings(normalizedRoots),
+		allowlist:    allowlist,
+		buildCtx:     cloneBuildContext(buildCtx),
+		cacheKey:     cacheKey,
+		excludeGlobs: loaded.excludeGlobs,
+		repoRoot:     key.repoRoot,
+		roots:        cloneStrings(normalizedRoots),
 	}, nil
 }
 
@@ -141,7 +143,13 @@ func loadProcessCachedAnyAllowlist(listPath string) (loadedAnyAllowlist, error) 
 
 func loadRepoValidationResult(config repoValidationConfig) (repoValidationResult, error) {
 	return processRepoValidationCache.load(config.cacheKey, func() (repoValidationResult, error) {
-		return repoValidationResultCollector(config.repoRoot, config.roots, config.allowlist, config.buildCtx)
+		return repoValidationResultCollector(
+			config.repoRoot,
+			config.roots,
+			config.allowlist,
+			config.excludeGlobs,
+			config.buildCtx,
+		)
 	})
 }
 
@@ -149,9 +157,10 @@ func collectRepoValidationResultWithBuildContext(
 	repoRoot string,
 	roots []string,
 	allowlist AnyAllowlist,
+	excludeGlobs compiledExcludeGlobs,
 	buildCtx *build.Context,
 ) (repoValidationResult, error) {
-	findings, err := collectFindingsWithBuildContext(repoRoot, roots, allowlist.ExcludeGlobs, buildCtx)
+	findings, err := collectFindingsWithCompiledExcludeGlobs(repoRoot, roots, excludeGlobs, buildCtx)
 	if err != nil {
 		return repoValidationResult{}, err
 	}

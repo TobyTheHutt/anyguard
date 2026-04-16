@@ -190,8 +190,16 @@ func TestLoadRepoValidationConfigNormalizesInputs(t *testing.T) {
 	if !reflect.DeepEqual(config.roots, []string{"."}) {
 		t.Fatalf("unexpected normalized roots: %#v", config.roots)
 	}
-	if !reflect.DeepEqual(config.allowlist.ExcludeGlobs, []string{"pkg/*.go"}) {
+	const wantExcludeGlob = "pkg/*.go"
+	wantExcludeGlobs := []string{wantExcludeGlob}
+	if !reflect.DeepEqual(config.allowlist.ExcludeGlobs, wantExcludeGlobs) {
 		t.Fatalf("unexpected normalized exclude globs: %#v", config.allowlist.ExcludeGlobs)
+	}
+	if got, want := len(config.excludeGlobs.matchers), 1; got != want {
+		t.Fatalf("unexpected compiled exclude glob count: got %d want %d", got, want)
+	}
+	if got, want := config.excludeGlobs.matchers[0].pattern, wantExcludeGlob; got != want {
+		t.Fatalf("unexpected compiled exclude glob pattern: got %q want %q", got, want)
 	}
 }
 
@@ -346,10 +354,11 @@ func TestAnalyzerRunReusesRepoValidationFailureAcrossPasses(t *testing.T) {
 		repoRoot string,
 		roots []string,
 		allowlist AnyAllowlist,
+		excludeGlobs compiledExcludeGlobs,
 		buildCtx *build.Context,
 	) (repoValidationResult, error) {
 		repoValidationCalls.Add(1)
-		return originalCollector(repoRoot, roots, allowlist, buildCtx)
+		return originalCollector(repoRoot, roots, allowlist, excludeGlobs, buildCtx)
 	}
 	t.Cleanup(func() {
 		repoValidationResultCollector = originalCollector
@@ -403,10 +412,11 @@ func TestAnalyzerRunReusesRepoValidationCacheAcrossPasses(t *testing.T) {
 		repoRoot string,
 		roots []string,
 		allowlist AnyAllowlist,
+		excludeGlobs compiledExcludeGlobs,
 		buildCtx *build.Context,
 	) (repoValidationResult, error) {
 		calls.Add(1)
-		return originalCollector(repoRoot, roots, allowlist, buildCtx)
+		return originalCollector(repoRoot, roots, allowlist, excludeGlobs, buildCtx)
 	}
 	t.Cleanup(func() {
 		repoValidationResultCollector = originalCollector
