@@ -262,7 +262,7 @@ import anyguard "github.com/tobythehutt/anyguard/v2"
 ```
 
 ```bash
-go get github.com/tobythehutt/anyguard/v2@v2.0.3
+go get github.com/tobythehutt/anyguard/v2@v2.0.2
 ```
 
 ### License

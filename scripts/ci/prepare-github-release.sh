@@ -116,10 +116,9 @@ read_remote_tag_status() {
 	if git ls-remote --exit-code --tags origin "${tag_ref}" >/dev/null 2>&1; then
 		printf 'exists\n'
 		return
-	else
-		status="$?"
 	fi
 
+	status="$?"
 	if [[ "${status}" == "2" ]]; then
 		printf 'missing\n'
 		return
