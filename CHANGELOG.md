@@ -6,6 +6,8 @@ The format is based on Keep a Changelog, with the current development state trac
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-04-16
+
 ### Added
 
 - Added an automated release workflow that validates release-prep pull requests, tags the final `main` commit after merge, and publishes the GitHub release from the curated changelog body. (@TobyTheHutt)
@@ -24,6 +26,7 @@ The format is based on Keep a Changelog, with the current development state trac
 ### Fixed
 
 - Cached analyzer repo-wide validation failures, parsed allowlists, and normalized validation config per process so repeated stale-selector analyzer passes fail closed without recomputing the same repo-wide state. (@TobyTheHutt)
+- Corrected release-prep tag validation so repositories with an `origin` remote and no matching release tag are treated as unreleased instead of failing, and added regression coverage for both PR validation and publish reruns. (@TobyTheHutt)
 
 ## [2.0.2] - 2026-03-22
 
@@ -102,7 +105,8 @@ The format is based on Keep a Changelog, with the current development state trac
 
 - Initial anyguard release with YAML allowlist support, repository scanning, and CI bootstrap for enforcing controlled `any` usage. (@TobyTheHutt)
 
-[Unreleased]: https://github.com/tobythehutt/anyguard/compare/v2.0.2...HEAD
+[Unreleased]: https://github.com/tobythehutt/anyguard/compare/v2.0.3...HEAD
+[2.0.3]: https://github.com/tobythehutt/anyguard/compare/v2.0.2...v2.0.3
 [2.0.2]: https://github.com/tobythehutt/anyguard/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/tobythehutt/anyguard/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/tobythehutt/anyguard/compare/v1.0.0...v2.0.0
