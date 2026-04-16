@@ -27,6 +27,7 @@ The format is based on Keep a Changelog, with the current development state trac
 
 - Cached analyzer repo-wide validation failures, parsed allowlists, and normalized validation config per process so repeated stale-selector analyzer passes fail closed without recomputing the same repo-wide state. (@TobyTheHutt)
 - Corrected release-prep tag validation so repositories with an `origin` remote and no matching release tag are treated as unreleased instead of failing, and added regression coverage for both PR validation and publish reruns. (@TobyTheHutt)
+- Accepted GitHub squash-merge `(#123)` suffixes on `release: vX.Y.Z` main-branch commit subjects so automatic release tagging still triggers without requiring the suffix. (@TobyTheHutt)
 
 ## [2.0.2] - 2026-03-22
 
