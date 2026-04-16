@@ -938,15 +938,79 @@ func TestUtilityFunctions(t *testing.T) {
 }
 
 func TestShouldExcludeAndGlobMatch(t *testing.T) {
-	if !shouldExclude(testFooTestPath, []string{"**/*_test.go"}) {
+	excludeGlobs := mustCompileExcludeGlobs(t, []string{"**/*_test.go"})
+	if !shouldExclude(testFooTestPath, excludeGlobs) {
 		t.Fatalf("expected exclude match")
 	}
-	if shouldExclude("pkg/api/foo.go", []string{"**/*_test.go"}) {
+	if shouldExclude("pkg/api/foo.go", excludeGlobs) {
 		t.Fatalf("did not expect exclude match")
 	}
 	ok, err := matchGlob("pkg/**/foo*.go", testFooTestPath)
 	if err != nil || !ok {
 		t.Fatalf("expected recursive glob match, got ok=%v err=%v", ok, err)
+	}
+}
+
+func TestCompiledExcludeGlobsKeepGlobSemantics(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		path    string
+		want    bool
+	}{
+		{
+			name:    "star stays inside path segment",
+			pattern: "pkg/*.go",
+			path:    "pkg/api/foo.go",
+			want:    false,
+		},
+		{
+			name:    "star matches file basename",
+			pattern: "pkg/*.go",
+			path:    "pkg/foo.go",
+			want:    true,
+		},
+		{
+			name:    "double star crosses path segments",
+			pattern: "pkg/**/foo.go",
+			path:    "pkg/api/internal/foo.go",
+			want:    true,
+		},
+		{
+			name:    "question mark stays inside path segment",
+			pattern: "pkg/file?.go",
+			path:    "pkg/file1.go",
+			want:    true,
+		},
+		{
+			name:    "question mark does not cross slash",
+			pattern: "pkg/file?.go",
+			path:    "pkg/file/.go",
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			excludeGlobs := mustCompileExcludeGlobs(t, []string{tt.pattern})
+
+			got := shouldExclude(tt.path, excludeGlobs)
+			if got != tt.want {
+				t.Fatalf("unexpected exclude match: got %v want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompileExcludeGlobsNormalizesPatterns(t *testing.T) {
+	excludeGlobs := mustCompileExcludeGlobs(t, []string{" ", "./pkg//*.go"})
+	if got, want := len(excludeGlobs.matchers), 1; got != want {
+		t.Fatalf("unexpected compiled glob count: got %d want %d", got, want)
+	}
+
+	matcher := excludeGlobs.matchers[0]
+	if got, want := matcher.pattern, "pkg/*.go"; got != want {
+		t.Fatalf("unexpected normalized glob pattern: got %q want %q", got, want)
 	}
 }
 
@@ -1590,7 +1654,7 @@ func TestCollectParsedPackagesGroupsByDirectoryAndPackage(t *testing.T) {
 	writeFile(t, filepath.Join(base, testZPath), testPackageAPISource)
 	writeFile(t, filepath.Join(base, testExternalTestPath), "package api_test\n")
 
-	parsed, err := collectParsedPackages(filepath.Join(base, "pkg"), base, nil, nil)
+	parsed, err := collectParsedPackages(filepath.Join(base, "pkg"), base, compiledExcludeGlobs{}, nil)
 	if err != nil {
 		t.Fatalf("collect parsed packages: %v", err)
 	}
@@ -1623,7 +1687,7 @@ func TestParseRootFileSkipsDirectory(t *testing.T) {
 	fset := token.NewFileSet()
 	entry := dirEntryFromPath(t, base)
 
-	_, keep, err := parseRootFile(fset, base, entry, nil, base, nil, currentBuildContext())
+	_, keep, err := parseRootFile(fset, base, entry, nil, base, compiledExcludeGlobs{}, currentBuildContext())
 	if err != nil {
 		t.Fatalf("parse directory: %v", err)
 	}
@@ -1639,7 +1703,8 @@ func TestParseRootFileSkipsExcludedFile(t *testing.T) {
 	writeFile(t, path, testPackageAPISource)
 	entry := dirEntryFromPath(t, path)
 
-	_, keep, err := parseRootFile(fset, path, entry, nil, base, []string{"**/*_test.go"}, currentBuildContext())
+	excludeGlobs := mustCompileExcludeGlobs(t, []string{"**/*_test.go"})
+	_, keep, err := parseRootFile(fset, path, entry, nil, base, excludeGlobs, currentBuildContext())
 	if err != nil {
 		t.Fatalf("parse excluded file: %v", err)
 	}
@@ -1655,7 +1720,15 @@ func TestParseRootFileSkipsInactiveBuildConstrainedFile(t *testing.T) {
 	writeFile(t, path, testPayloadSource)
 	entry := dirEntryFromPath(t, path)
 
-	_, keep, err := parseRootFile(fset, path, entry, nil, base, nil, testBuildContext("linux", "amd64"))
+	_, keep, err := parseRootFile(
+		fset,
+		path,
+		entry,
+		nil,
+		base,
+		compiledExcludeGlobs{},
+		testBuildContext("linux", "amd64"),
+	)
 	if err != nil {
 		t.Fatalf("parse inactive build-constrained file: %v", err)
 	}
@@ -1671,7 +1744,7 @@ func TestParseRootFileReportsParseErrors(t *testing.T) {
 	writeFile(t, path, testBrokenGoSource)
 	entry := dirEntryFromPath(t, path)
 
-	_, keep, err := parseRootFile(fset, path, entry, nil, base, nil, currentBuildContext())
+	_, keep, err := parseRootFile(fset, path, entry, nil, base, compiledExcludeGlobs{}, currentBuildContext())
 	if err == nil {
 		t.Fatal(testExpectedParseError)
 	}
@@ -1687,7 +1760,7 @@ func TestParseRootFileReturnsParsedGoFile(t *testing.T) {
 	writeFile(t, path, testPayloadSource)
 	entry := dirEntryFromPath(t, path)
 
-	parsed, keep, err := parseRootFile(fset, path, entry, nil, base, nil, currentBuildContext())
+	parsed, keep, err := parseRootFile(fset, path, entry, nil, base, compiledExcludeGlobs{}, currentBuildContext())
 	if err != nil {
 		t.Fatalf(testParseFileErrFmt, err)
 	}
@@ -1846,6 +1919,16 @@ type violationSummary struct {
 	category string
 	line     int
 	column   int
+}
+
+func mustCompileExcludeGlobs(t *testing.T, globs []string) compiledExcludeGlobs {
+	t.Helper()
+
+	excludeGlobs, err := compileExcludeGlobs(globs)
+	if err != nil {
+		t.Fatalf("compile exclude globs: %v", err)
+	}
+	return excludeGlobs
 }
 
 func collectUsageSummaries(t *testing.T, src string) []usageSummary {

@@ -102,7 +102,7 @@ func (cfg *analyzerConfig) run(pass *analysis.Pass) (any, error) {
 		pass,
 		repoRoot,
 		validationConfig.roots,
-		validationConfig.allowlist.ExcludeGlobs,
+		validationConfig.excludeGlobs,
 	)
 	if err != nil {
 		return nil, err
@@ -196,14 +196,18 @@ func resolveAllowlistPath(repoRoot, configured string) (string, error) {
 
 func collectAnalyzerFiles(pass *analysis.Pass, repoRoot string, roots []string, excludeGlobs []string) ([]analyzerFile, error) {
 	filteredRoots := normalizeConfiguredRoots(roots, repoRoot)
-	return collectAnalyzerFilesWithNormalizedRoots(pass, repoRoot, filteredRoots, excludeGlobs)
+	compiledGlobs, err := compileExcludeGlobs(excludeGlobs)
+	if err != nil {
+		return nil, err
+	}
+	return collectAnalyzerFilesWithNormalizedRoots(pass, repoRoot, filteredRoots, compiledGlobs)
 }
 
 func collectAnalyzerFilesWithNormalizedRoots(
 	pass *analysis.Pass,
 	repoRoot string,
 	filteredRoots []string,
-	excludeGlobs []string,
+	excludeGlobs compiledExcludeGlobs,
 ) ([]analyzerFile, error) {
 	if len(filteredRoots) == 0 {
 		return nil, errors.New("no usable roots after normalization")
@@ -227,7 +231,7 @@ func collectAnalyzerFile(
 	file *ast.File,
 	repoRoot string,
 	roots []string,
-	excludeGlobs []string,
+	excludeGlobs compiledExcludeGlobs,
 ) (analyzerFile, bool, error) {
 	pos := pass.Fset.PositionFor(file.Package, false)
 	if pos.Filename == "" {
@@ -262,7 +266,7 @@ func collectAnalyzerFile(
 	}, true, nil
 }
 
-func shouldCollectAnalyzerPath(relPath string, roots []string, excludeGlobs []string) bool {
+func shouldCollectAnalyzerPath(relPath string, roots []string, excludeGlobs compiledExcludeGlobs) bool {
 	return isWithinRoots(relPath, roots) && !shouldExclude(relPath, excludeGlobs)
 }
 

@@ -10,6 +10,11 @@ The format is based on Keep a Changelog, with the current development state trac
 
 - Added an automated release workflow that validates release-prep pull requests, tags the final `main` commit after merge, and publishes the GitHub release from the curated changelog body. (@TobyTheHutt)
 - Added GitHub generated release-note configuration and label guidance without replacing the curated changelog. (@TobyTheHutt)
+- Added exclude-glob microbenchmarks that compare the previous per-file regex compilation path with reused compiled matchers. (@TobyTheHutt)
+
+### Changed
+
+- Precompiled `exclude_globs` once per allowlist/config load and reused the compiled matchers during file filtering, preserving existing `*`, `**`, and `?` matching semantics while removing regex compilation from the hot path. (@TobyTheHutt)
 
 ### Fixed
 
