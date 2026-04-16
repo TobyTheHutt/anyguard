@@ -56,9 +56,9 @@ Packages:
 ### Behavior
 
 - Scans `.go` files under configured roots.
-- `anyguard` is AST-slot-driven and semantically resolved: it reports `any` only in explicitly supported AST child slots, and every report requires the identifier to resolve to the Go universe `any` alias.
+- `anyguard` is AST-slot-driven with lexical resolution: it reports `any` in supported AST child slots, and every report requires the identifier to resolve to the Go universe `any` alias rather than a package, file, type-parameter, or local declaration.
 - That supported-slot list is the public contract. Dedicated type-position slots and compatibility slots use the same universe-`any` resolution, which keeps shadowed declarations silent.
-- The detection-contract table below distinguishes semantically resolved type-position slots from the three supported compatibility slots: `*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]`.
+- The detection-contract table below distinguishes dedicated type-position slots from the three supported compatibility slots: `*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]`.
 - There are no remaining syntax-only slots in the current implementation.
 - `anyguard` is not a broader classifier for every type-like use. If your policy wants only dedicated type-position fields, the compatibility slots above are the only extra scope.
 - Compares findings against an allowlist.
@@ -79,12 +79,12 @@ Packages:
 
 | Concern | Generic ban-pattern linter | `anyguard` |
 | --- | --- | --- |
-| Basic overlap | Usually bans an identifier, token, or textual pattern and reports matches. | Reports `any` only in explicitly supported AST child slots, and every supported slot resolves the universe `any` alias so shadowed declarations stay silent. The dedicated type-position slots are semantically resolved, and `*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]` remain deliberate compatibility slots for conversions and generic instantiations. |
+| Basic overlap | Usually bans an identifier, token, or textual pattern and reports matches. | Reports `any` in supported AST child slots, and every supported slot uses lexical resolution of the universe `any` alias so shadowed declarations stay silent. The dedicated type-position slots and `*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]` remain deliberate compatibility slots for conversions and generic instantiations. |
 | Allowlist precision | Exceptions are often broad file, symbol, regex, or inline suppression patterns. | Each exception resolves to one exact selector identity: `{path, owner, category, line, column}`. Legacy selectors without coordinates are accepted only when `{path, owner, category}` still resolves to exactly one current finding. Broad file-level or owner-only exceptions are not supported in schema version `2`. |
 | Stale selector rejection | Suppressions can drift silently after refactors or when the original finding disappears. | Selectors that no longer resolve to a current finding are rejected as stale or typoed configuration. |
 | Canonical finding identity | Findings are often tied to textual matches or positions only. | Each finding has one canonical identity captured as `{path, owner, category, line, column}`, and diagnostics are emitted in deterministic order. |
 | Configuration hygiene | Config validation is often looser because the tool's job is just pattern matching. | Unknown, malformed, duplicate, ambiguous, and unresolved selectors are rejected and analysis fails closed. |
-| Detection contract | Supported and unsupported cases are often implicit in the matcher. | The README defines the exact supported AST parent/child slots and explicitly documents unsupported and ambiguous cases as part of the public contract. |
+| Detection contract | Supported and unsupported cases are often implicit in the matcher. | The README defines the exact supported AST parent/child slots and documents unsupported and ambiguous cases as part of the public contract. |
 
 The practical answer to "why not use an existing ban-pattern linter?" is:
 
@@ -122,26 +122,26 @@ Each entry must resolve to one exact finding. The canonical finding identity is 
 
 ### Detection Contract
 
-`anyguard` is AST-slot driven. It reports `any` only when the identifier is the direct child of one of the AST slots below, and that supported-slot list is the public contract. Every supported slot uses the same semantic check: the matched identifier must resolve to the Go universe `any` alias. There are no syntax-only slots in the current implementation. The contract splits supported slots into dedicated type-position slots and compatibility slots because Go models conversions and generic instantiations with general expression nodes. Anything not listed is unsupported and is not detected or reported (you are welcome to contribute).
+`anyguard` is AST-slot driven. It reports `any` only when the identifier is the direct child of one of the AST slots below, and that supported-slot list is the public contract. Every supported slot uses the same lexical check: the matched identifier must resolve to the Go universe `any` alias with no shadowing package, file, type-parameter, or local declaration in scope. There are no syntax-only slots in the current implementation. The contract splits supported slots into dedicated type-position slots and compatibility slots because Go models conversions and generic instantiations with general expression nodes. Anything not listed is unsupported and is not detected or reported (you are welcome to contribute).
 
 The syntax snippets in this section are mirrored in the corpus fixtures under `internal/validation/testdata/corpus/{supported,boundary,unsupported}` so the documented boundary stays testable.
 
 | Parent AST node | Child slot | Resolution kind | Supported syntax |
 | --- | --- | --- | --- |
-| `*ast.Field` | `Type` | Semantically resolved type-position slot | Parameter types, result types, struct field types, and interface field or member types |
-| `*ast.ValueSpec` | `Type` | Semantically resolved type-position slot | Explicit variable declaration types |
-| `*ast.TypeSpec` | `Type` | Semantically resolved type-position slot | Type alias and type definition right hand sides |
-| `*ast.TypeAssertExpr` | `Type` | Semantically resolved type-position slot | Type assertions such as `value.(any)` |
-| `*ast.ArrayType` | `Elt` | Semantically resolved type-position slot | Array and slice element types |
-| `*ast.MapType` | `Key`, `Value` | Semantically resolved type-position slot | Map key and value types |
-| `*ast.ChanType` | `Value` | Semantically resolved type-position slot | Channel element types |
-| `*ast.StarExpr` | `X` | Semantically resolved type-position slot | Pointer target types |
-| `*ast.Ellipsis` | `Elt` | Semantically resolved type-position slot | Variadic parameter element types |
-| `*ast.CallExpr` | `Fun` | Semantically resolved compatibility slot | Conversions such as `any(value)` when the callee resolves to the universe alias |
-| `*ast.IndexExpr` | `Index` | Semantically resolved compatibility slot | Single-argument instantiations such as `Box[any]` when the index resolves to the universe alias |
-| `*ast.IndexListExpr` | `Indices[i]` | Semantically resolved compatibility slot | Multi-argument instantiations such as `Box[int, any]` when the type argument resolves to the universe alias |
+| `*ast.Field` | `Type` | Lexical type-position slot | Parameter types, result types, struct field types, and interface field or member types |
+| `*ast.ValueSpec` | `Type` | Lexical type-position slot | Explicit variable declaration types |
+| `*ast.TypeSpec` | `Type` | Lexical type-position slot | Type alias and type definition right hand sides |
+| `*ast.TypeAssertExpr` | `Type` | Lexical type-position slot | Type assertions such as `value.(any)` |
+| `*ast.ArrayType` | `Elt` | Lexical type-position slot | Array and slice element types |
+| `*ast.MapType` | `Key`, `Value` | Lexical type-position slot | Map key and value types |
+| `*ast.ChanType` | `Value` | Lexical type-position slot | Channel element types |
+| `*ast.StarExpr` | `X` | Lexical type-position slot | Pointer target types |
+| `*ast.Ellipsis` | `Elt` | Lexical type-position slot | Variadic parameter element types |
+| `*ast.CallExpr` | `Fun` | Lexical compatibility slot | Conversions such as `any(value)` when the callee resolves to the universe alias |
+| `*ast.IndexExpr` | `Index` | Lexical compatibility slot | Single-argument instantiations such as `Box[any]` when the index resolves to the universe alias |
+| `*ast.IndexListExpr` | `Indices[i]` | Lexical compatibility slot | Multi-argument instantiations such as `Box[int, any]` when the type argument resolves to the universe alias |
 
-`*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]` remain compatibility slots, not syntax-only exceptions. They still require the universe `any` alias, but they are supported because Go exposes conversions and generic instantiations through expression nodes instead of dedicated type-position AST fields.
+`*ast.CallExpr.Fun`, `*ast.IndexExpr.Index`, and `*ast.IndexListExpr.Indices[i]` remain compatibility slots, not syntax-only exceptions. They require the universe `any` alias, but they are supported because Go exposes conversions and generic instantiations through expression nodes instead of dedicated type-position AST fields.
 
 Nested `any` is reportable only when the nested identifier still appears in one of those slots. For example, `type NestedArray map[string][]any` reports because the innermost `any` is still the `Elt` of an `*ast.ArrayType`.
 
@@ -149,9 +149,9 @@ Nested `any` is reportable only when the nested identifier still appears in one 
 
 - Type parameter constraints stay silent because `any` constrains a type parameter instead of occupying a concrete supported slot, for example `func Use[T any](value T) {}`.
 - Any `any` occurrence whose direct parent child AST relationship is not listed above stays silent. That includes identifier names, selectors, assignments, composite literal elements, return expressions, type switch case lists, comments, and string literals. Example: `func TypeSwitchCaseList(value interface{}) { switch value.(type) { case any, string: } }`.
-- Each report requires semantic resolution to the universe `any` alias. Shadowed declarations stay silent. Examples include `func any(v int) int` with `any(1)`, a function that binds a local `any := 0` before indexing `values[any]`, and a file that defines `type any interface{}` before using `Box[int, any]{}`.
+- Each report requires lexical resolution to the universe `any` alias. Shadowed declarations stay silent. Examples include `func any(v int) int` with `any(1)`, a function that binds a local `any := 0` before indexing `values[any]`, and a file that defines `type any interface{}` before using `Box[int, any]{}`.
 - False positives should mostly come down to scope. If your policy excludes the three compatibility slots above, `anyguard` will still report them. Shadowed declarations and unsupported syntax stay silent.
-- On invalid or incomplete code, `anyguard` does not guess from bare syntax. It only reports when the identifier can still be resolved as the universe alias.
+- On invalid or incomplete code, `anyguard` does not use package type checking to guess intent. It reports supported-slot bare `any` when lexical scope leaves it unshadowed as the universe alias.
 - Exact allowlist selectors and `//nolint:anyguard` remain the escape hatches when a resolved universe-`any` usage is intentionally allowed
 
 #### Finding identity
@@ -227,7 +227,7 @@ The benchmark suite includes `ValidateAnyUsage`, repo-wide finding collection an
 - Stable plugin import path: `github.com/tobythehutt/anyguard/v2/plugin`
 - Plugin name in `.golangci.yml`: `anyguard`
 - Plugin diagnostics follow the same deterministic ordering contract as the CLI and public analyzer.
-- The module plugin requests golangci-lint `typesinfo` load mode so supported-slot matching can use `analysis.Pass.TypesInfo`.
+- The module plugin requests golangci-lint `typesinfo` load mode for the current release, although supported-slot matching uses lexical scope resolution.
 - The module plugin reports diagnostics for the current package only. Repo-wide allowlist and stale-selector validation are shared across the golangci-lint process and are not redone as a whole-repo audit for every package.
 - Integration docs and examples: `docs/golangci-lint/README.md`
 - Upstream readiness notes: `docs/golangci-lint/README.md#upstream-readiness`
@@ -238,7 +238,7 @@ For direct integration into `golangci-lint`, import the public analyzer entrypoi
 
 - Module path: `github.com/tobythehutt/anyguard/v2`
 - Analyzer constructor: `anyguard.NewAnalyzer()`
-- The analyzer uses `analysis.Pass.TypesInfo` and runs despite errors so partial type info is still available on ill-typed packages.
+- The analyzer runs despite errors and uses lexical scope resolution for supported-slot `any` matching.
 - Analyzer diagnostics follow the same deterministic ordering contract as the CLI and module plugin.
 
 ```go
