@@ -7,7 +7,7 @@
 - Linter name in `.golangci.yml`: `anyguard`
 - Module-plugin diagnostics follow the same deterministic ordering compatibility guarantee as the CLI and public analyzer.
 - The plugin uses the same AST-slot-driven contract as the CLI and public analyzer.
-- It requests golangci-lint `typesinfo` load mode for the current release, although supported-slot matching uses lexical scope resolution.
+- It requests golangci-lint `syntax` load mode. Supported-slot matching, shadowed-`any` suppression, and repo-wide stale-selector validation use parsed syntax plus lexical scope resolution rather than `types.Info`.
 - It reports `any` in supported AST child slots, and every supported slot uses lexical resolution of the universe `any` alias to suppress shadowed declarations.
 - The detection contract distinguishes dedicated type-position slots from the three compatibility slots, and there are no syntax-only slots left in the implementation.
 
@@ -60,11 +60,11 @@ linters:
 
 ## Load mode and performance
 
-- The module plugin requires `typesinfo` load mode.
-- This increases golangci-lint package loading cost compared with a syntax-only plugin because packages are type checked before `anyguard` runs, although matching does not consume `types.Info`.
+- The module plugin requires `syntax` load mode.
+- This skips golangci-lint package type checking before `anyguard` runs. Matching, shadowed-`any` suppression, and stale-selector validation do not consume `types.Info`.
 - The plugin also pays one repo-wide allowlist-validation cost per golangci-lint process so stale selectors remain fail-closed across the configured roots.
 - It does not run a whole-repo diagnostic audit on every package. Only current-package diagnostics are emitted per pass.
-- Compared with the audit path, the tradeoff is higher per-package `typesinfo` loading but no repeated repo scan for every package.
+- Compared with the audit path, the tradeoff is lower per-package front-end cost but no repeated repo scan for every package.
 - Module-plugin diagnostics stay sorted by `file`, `line`, `column`, `category`, and `owner`, independent of configured root order, filesystem traversal order, and map iteration.
 - Canonical finding identity and exact allowlist matching include `line` and `column` coordinates.
 - Legacy allowlist selectors that omit coordinates are accepted only when `{path, owner, category}` still resolves to exactly one current finding.
@@ -98,6 +98,7 @@ For maintainers evaluating possible core inclusion:
 
 - The normative spec is the root [`Behavior`](../../README.md#behavior), [`Comparison With Generic Ban-Pattern Linters`](../../README.md#comparison-with-generic-ban-pattern-linters), [`Allowlist Schema`](../../README.md#allowlist-schema), and [`Detection Contract`](../../README.md#detection-contract).
 - Supported syntax categories are exactly the AST child slots in the detection contract. Every supported slot uses lexical resolution of the universe `any` alias. The only slots outside dedicated type positions are the three compatibility slots. Anything outside that list is out of scope and intentionally silent.
+- The module plugin uses golangci-lint `syntax` load mode. Supported-slot matching, shadowed-`any` suppression, and repo-wide stale-selector validation run from parsed syntax plus lexical scope state rather than `types.Info`.
 - Each finding has one exact identity: `{path, owner, category, line, column}`. Allowlist matching is exact on that identity.
 - Legacy selectors without `line` and `column` are accepted only when their `{path, owner, category}` triple still resolves to exactly one current finding.
 - Module-plugin execution is package-local for diagnostics, but stale-selector validation remains repo-wide across the configured roots and is reused across package passes in the same process.

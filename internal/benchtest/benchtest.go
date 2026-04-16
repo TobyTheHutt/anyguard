@@ -38,12 +38,24 @@ const (
 	selectorsPerBenchmarkFile = 4
 )
 
-const packageLoadMode = packages.NeedName |
+// PackageLoadMode controls how much package metadata bench fixtures load.
+type PackageLoadMode int
+
+const (
+	// PackageLoadModeSyntax loads parsed files.
+	PackageLoadModeSyntax PackageLoadMode = iota
+	// PackageLoadModeTypesInfo adds package type data.
+	PackageLoadModeTypesInfo
+)
+
+const packageLoadModeSyntax = packages.NeedName |
 	packages.NeedFiles |
 	packages.NeedCompiledGoFiles |
 	packages.NeedImports |
 	packages.NeedDeps |
-	packages.NeedSyntax |
+	packages.NeedSyntax
+
+const packageLoadModeTypesInfo = packageLoadModeSyntax |
 	packages.NeedTypes |
 	packages.NeedTypesInfo
 
@@ -193,11 +205,23 @@ func copyModuleTreeEntry(srcRoot, dstRoot, path string, entry os.DirEntry, walkE
 
 func LoadPackageSnapshots(tb testing.TB, dir string, patterns []string) []PackageSnapshot {
 	tb.Helper()
+	defaultLoadMode := PackageLoadModeTypesInfo
+	return LoadPackageSnapshotsWithMode(tb, dir, patterns, defaultLoadMode)
+}
+
+// LoadPackageSnapshotsWithMode loads package snapshots for the requested frontend mode.
+func LoadPackageSnapshotsWithMode(
+	tb testing.TB,
+	dir string,
+	patterns []string,
+	loadMode PackageLoadMode,
+) []PackageSnapshot {
+	tb.Helper()
 
 	cfg := &packages.Config{
 		Dir:  dir,
 		Env:  append(os.Environ(), "GOWORK=off"),
-		Mode: packageLoadMode,
+		Mode: snapshotPackageLoadMode(loadMode),
 	}
 	pkgs, err := packages.Load(cfg, patterns...)
 	if err != nil {
@@ -209,18 +233,8 @@ func LoadPackageSnapshots(tb testing.TB, dir string, patterns []string) []Packag
 
 	snapshots := make([]PackageSnapshot, 0, len(pkgs))
 	for _, pkg := range pkgs {
-		if pkg.Types == nil || pkg.TypesInfo == nil || pkg.Fset == nil || len(pkg.Syntax) == 0 {
-			tb.Fatalf("package %q missing syntax or type information", pkg.PkgPath)
-		}
-
-		snapshots = append(snapshots, PackageSnapshot{
-			Fset:      pkg.Fset,
-			Files:     pkg.Syntax,
-			Path:      pkg.PkgPath,
-			ReadFile:  os.ReadFile,
-			Types:     pkg.Types,
-			TypesInfo: pkg.TypesInfo,
-		})
+		validateSnapshotPackage(tb, pkg, loadMode)
+		snapshots = append(snapshots, newPackageSnapshot(pkg))
 	}
 
 	sort.Slice(snapshots, func(i, j int) bool {
@@ -229,10 +243,55 @@ func LoadPackageSnapshots(tb testing.TB, dir string, patterns []string) []Packag
 	return snapshots
 }
 
+func snapshotPackageLoadMode(loadMode PackageLoadMode) packages.LoadMode {
+	mode := packageLoadModeTypesInfo
+	if loadMode == PackageLoadModeSyntax {
+		mode = packageLoadModeSyntax
+	}
+	return mode
+}
+
+func validateSnapshotPackage(tb testing.TB, pkg *packages.Package, loadMode PackageLoadMode) {
+	tb.Helper()
+
+	hasFileSet := pkg.Fset != nil
+	hasSyntax := len(pkg.Syntax) > 0
+	if !hasFileSet || !hasSyntax {
+		tb.Fatalf("package %q missing syntax information", pkg.PkgPath)
+	}
+	if loadMode != PackageLoadModeTypesInfo {
+		return
+	}
+	hasTypes := pkg.Types != nil
+	hasTypesInfo := pkg.TypesInfo != nil
+	if !hasTypes || !hasTypesInfo {
+		tb.Fatalf("package %q missing type information", pkg.PkgPath)
+	}
+}
+
+func newPackageSnapshot(pkg *packages.Package) PackageSnapshot {
+	return PackageSnapshot{
+		Fset:      pkg.Fset,
+		Files:     pkg.Syntax,
+		Path:      pkg.PkgPath,
+		ReadFile:  os.ReadFile,
+		Types:     pkg.Types,
+		TypesInfo: pkg.TypesInfo,
+	}
+}
+
+// discardDiagnostic satisfies analysis.Pass.Report in benchmarks that ignore
+// reported diagnostics.
+func discardDiagnostic(diagnostic analysis.Diagnostic) {
+	_ = diagnostic
+}
+
 func NewPass(snapshot PackageSnapshot, analyzer *analysis.Analyzer, report func(analysis.Diagnostic)) *analysis.Pass {
 	if report == nil {
-		report = func(analysis.Diagnostic) {}
+		report = discardDiagnostic
 	}
+	// Syntax-mode snapshots leave Pkg and TypesInfo nil. That covers analyzers
+	// that read parsed files and lexical scope.
 	return &analysis.Pass{
 		Analyzer:  analyzer,
 		Fset:      snapshot.Fset,
