@@ -19,6 +19,7 @@ import (
 )
 
 const errUnexpectedSmokeDiagnosticCount = "unexpected smoke diagnostic count: got %d want %d"
+const errUnexpectedCheckedInRepoModulePluginDiagnostics = "unexpected checked-in repo module-plugin diagnostic count: got %d want %d"
 const expectedSmokeDiagnosticCount = 5
 
 type smokeBenchmarkCase struct {
@@ -54,7 +55,7 @@ func benchmarkModulePluginSmokePath(
 	b.Helper()
 
 	snapshots := loadSmokeSnapshots(b, smokeRoot, patterns, benchmarkCase.loadMode)
-	diagnosticCount := benchmarkSmokeDiagnostics(b, settings, snapshots)
+	diagnosticCount := benchmarkModulePluginDiagnostics(b, settings, snapshots)
 	expectedDiagnosticCount := expectedSmokeDiagnosticCount
 	// The checked-in smoke fixture emits five diagnostics. The shell smoke script
 	// checks the same count.
@@ -70,9 +71,50 @@ func benchmarkModulePluginSmokePath(
 			// Each iteration reloads package inputs. The benchmark includes the
 			// package work selected by the module-plugin load mode.
 			reloadedSnapshots := loadSmokeSnapshots(b, smokeRoot, patterns, benchmarkCase.loadMode)
-			reloadedDiagnosticCount := benchmarkSmokeDiagnostics(b, settings, reloadedSnapshots)
+			reloadedDiagnosticCount := benchmarkModulePluginDiagnostics(b, settings, reloadedSnapshots)
 			if reloadedDiagnosticCount != expectedDiagnosticCount {
 				b.Fatalf(errUnexpectedSmokeDiagnosticCount, reloadedDiagnosticCount, expectedDiagnosticCount)
+			}
+		}
+	})
+}
+
+func BenchmarkCheckedInRepoModulePluginPath(b *testing.B) {
+	checkedInRepo := benchtest.CurrentCheckedInRepo(b)
+	settings := map[string]any{
+		flagAllowlist: checkedInRepo.AllowlistRelPath,
+		flagRepoRoot:  checkedInRepo.Root,
+		flagRoots:     benchmarkPluginRoots(checkedInRepo.Roots),
+	}
+	loadMode := benchtest.PackageLoadModeSyntax
+	snapshots := benchtest.LoadPackageSnapshotsWithMode(
+		b,
+		checkedInRepo.Root,
+		checkedInRepo.PackagePatterns,
+		loadMode,
+	)
+
+	snapshotCount := len(snapshots)
+	if snapshotCount == 0 {
+		b.Fatal("expected checked-in repo module-plugin benchmark to load packages")
+	}
+
+	expectedDiagnosticCount := benchmarkModulePluginDiagnostics(b, settings, snapshots)
+	benchmarkName := fmt.Sprintf("checked-in-%dpkgs-%ddiagnostics", snapshotCount, expectedDiagnosticCount)
+	b.Run(benchmarkName, func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			// Reload syntax snapshots each iteration so the benchmark includes the
+			// same package-loading shape as the module-plugin integration path.
+			reloadedSnapshots := benchtest.LoadPackageSnapshotsWithMode(
+				b,
+				checkedInRepo.Root,
+				checkedInRepo.PackagePatterns,
+				loadMode,
+			)
+			diagnosticCount := benchmarkModulePluginDiagnostics(b, settings, reloadedSnapshots)
+			if diagnosticCount != expectedDiagnosticCount {
+				b.Fatalf(errUnexpectedCheckedInRepoModulePluginDiagnostics, diagnosticCount, expectedDiagnosticCount)
 			}
 		}
 	})
@@ -218,7 +260,7 @@ func loadSmokeGoVersion(tb testing.TB, smokeRoot string) string {
 	return ""
 }
 
-func benchmarkSmokeDiagnostics(tb testing.TB, settings map[string]any, snapshots []benchtest.PackageSnapshot) int {
+func benchmarkModulePluginDiagnostics(tb testing.TB, settings map[string]any, snapshots []benchtest.PackageSnapshot) int {
 	tb.Helper()
 
 	pluginInstance, err := New(settings)
@@ -247,6 +289,14 @@ func benchmarkSmokeDiagnostics(tb testing.TB, settings map[string]any, snapshots
 		}
 	}
 	return diagnosticCount
+}
+
+func benchmarkPluginRoots(roots []string) []any {
+	settingsRoots := make([]any, 0, len(roots))
+	for _, root := range roots {
+		settingsRoots = append(settingsRoots, root)
+	}
+	return settingsRoots
 }
 
 func smokePackagePatterns(tb testing.TB, smokeRoot string) []string {

@@ -6,6 +6,6 @@ entries:
       path: internal/validation/analyzer.go
       owner: analyzerConfig
       category: "*ast.Field.Type"
-      line: 84
+      line: 79
       column: 54
     description: go/analysis Run API requires returning `any`
