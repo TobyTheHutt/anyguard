@@ -11,12 +11,14 @@ The format is based on Keep a Changelog, with the current development state trac
 - Added an automated release workflow that validates release-prep pull requests, tags the final `main` commit after merge, and publishes the GitHub release from the curated changelog body. (@TobyTheHutt)
 - Added GitHub generated release-note configuration and label guidance without replacing the curated changelog. (@TobyTheHutt)
 - Added exclude-glob microbenchmarks that compare the previous per-file regex compilation path with reused compiled matchers. (@TobyTheHutt)
+- Added analyzer benchmarks for cold passes, reused passes, and warmed-cache passes. (@TobyTheHutt)
 
 ### Changed
 
 - Precompiled `exclude_globs` once per allowlist/config load and reused the compiled matchers during file filtering, preserving existing `*`, `**`, and `?` matching semantics while removing regex compilation from the hot path. (@TobyTheHutt)
 - Switched supported-slot `any` matching from `types.Info` dependence to lexical scope resolution (including shadowing behavior), and aligned analyzer/docs/tests with that contract. (@TobyTheHutt)
 - Switched the golangci-lint module plugin from `typesinfo` to `syntax` load mode after lexical scope resolution removed the `go/types` dependency from supported-slot matching, shadowed-`any` suppression, and repo-wide stale-selector validation. (@TobyTheHutt)
+- Reused cached repo-wide findings for package-local analyzer diagnostics by canonical repo-relative path without changing finding identity or report order. (@TobyTheHutt)
 
 ### Fixed
 
