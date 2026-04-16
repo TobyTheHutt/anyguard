@@ -47,16 +47,10 @@ jobs:
       - name: Get dependencies
         run: go get -v -t -d ./...
 
-      - name: Benchmark repo-wide validation
-        run: go test -run=^$ -bench=BenchmarkCheckedInRepoValidation -benchmem -benchtime=1x ./internal/validation
+      - name: Benchmark validation perf sanity
+        run: go test -run=^$ -bench='BenchmarkCheckedInRepoValidation|BenchmarkCheckedInRepoAnalyzerColdPass|BenchmarkCheckedInRepoAnalyzerWarmPass' -benchmem -benchtime=1x ./internal/validation
 
-      - name: Benchmark analyzer cold pass
-        run: go test -run=^$ -bench=BenchmarkCheckedInRepoAnalyzerColdPass -benchmem -benchtime=1x ./internal/validation
-
-      - name: Benchmark analyzer warm pass
-        run: go test -run=^$ -bench=BenchmarkCheckedInRepoAnalyzerWarmPass -benchmem -benchtime=1x ./internal/validation
-
-      - name: Benchmark module-plugin path
+      - name: Benchmark plugin perf sanity
         run: go test -run=^$ -bench=BenchmarkCheckedInRepoModulePluginPath -benchmem -benchtime=1x ./plugin
 
   lint:
