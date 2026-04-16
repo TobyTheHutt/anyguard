@@ -5,7 +5,7 @@ release_mode="${RELEASE_MODE:-publish}"
 changelog_path="${1:-CHANGELOG.md}"
 release_notes_root="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/anyguard-release"
 release_heading_pattern='^##[[:space:]]+\[v?([0-9]+\.[0-9]+\.[0-9]+)\][[:space:]]+-[[:space:]]+([0-9]{4}-[0-9]{2}-[0-9]{2})$'
-release_subject_pattern='^release:[[:space:]]+(v[0-9]+\.[0-9]+\.[0-9]+)$'
+release_subject_pattern='^release:[[:space:]]+(v[0-9]+\.[0-9]+\.[0-9]+)([[:space:]]+\(#[0-9]+\))?$'
 
 top_release_heading_awk() {
 	cat <<'AWK'
@@ -153,7 +153,7 @@ extract_release_tag_from_subject() {
 	fi
 
 	if [[ "${commit_subject}" == release:* ]]; then
-		fail "release commit subject must match 'release: vX.Y.Z', got '${commit_subject}'"
+		fail "release commit subject must match 'release: vX.Y.Z' or 'release: vX.Y.Z (#123)', got '${commit_subject}'"
 	fi
 }
 

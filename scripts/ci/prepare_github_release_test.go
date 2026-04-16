@@ -35,7 +35,9 @@ const (
 	outputTrue         = "true"
 	releaseBody        = "### Added\n\n- Added automated release tagging."
 	releaseDate        = "2026-04-14"
+	releasePRSuffix    = "(#123)"
 	releaseTag         = "v1.1.0"
+	releaseTaggedTitle = "release: v1.1.0 (#123)"
 	releaseVersion     = "1.1.0"
 	releaseModeEnv     = "RELEASE_MODE"
 	releaseNotesCommit = "docs: prepare release notes"
@@ -64,6 +66,21 @@ func TestPrepareGitHubReleaseDetectsReleaseSubject(t *testing.T) {
 
 	repo.writeChangelog(t, changelogWithTopRelease(releaseVersion, releaseBody))
 	repo.commit(t, releaseCommitTitle)
+
+	output := repo.requirePrepareSuccess(t)
+
+	requireOutputValue(t, output.releaseDetected, outputTrue, outputRelease)
+	requireOutputValue(t, output.tag, releaseTag, outputTag)
+	requireOutputValue(t, output.date, releaseDate, outputDate)
+	requireOutputValue(t, output.tagExists, outputFalse, outputTagExists)
+	requireReleaseBody(t, output.bodyFile, releaseBody)
+}
+
+func TestPrepareGitHubReleaseDetectsReleaseSubjectWithPRSuffix(t *testing.T) {
+	repo := newReleaseRepo(t)
+
+	repo.writeChangelog(t, changelogWithTopRelease(releaseVersion, releaseBody))
+	repo.commit(t, releaseTaggedTitle)
 
 	output := repo.requirePrepareSuccess(t)
 
@@ -161,8 +178,24 @@ func TestPrepareGitHubReleaseRejectsMalformedReleasePRTitle(t *testing.T) {
 
 	combinedOutput := repo.requirePrepareFailure(t, validatePREnvironment("release: 1.1.0")...)
 
-	if !strings.Contains(combinedOutput, "must match 'release: vX.Y.Z'") {
+	if !strings.Contains(combinedOutput, "must match 'release: vX.Y.Z' or 'release: vX.Y.Z (#123)'") {
 		t.Fatalf("expected malformed release PR title failure, got:\n%s", combinedOutput)
+	}
+}
+
+func TestPrepareGitHubReleaseRejectsNonNumericReleaseSuffix(t *testing.T) {
+	repo := newReleaseRepo(t)
+
+	repo.writeChangelog(t, changelogWithTopRelease(releaseVersion, releaseBody))
+	repo.commit(t, "release: v1.1.0 (#abc)")
+
+	combinedOutput := repo.requirePrepareFailure(t)
+
+	if !strings.Contains(combinedOutput, releasePRSuffix) {
+		t.Fatalf("expected malformed release suffix failure, got:\n%s", combinedOutput)
+	}
+	if !strings.Contains(combinedOutput, "release: vX.Y.Z (#123)") {
+		t.Fatalf("expected allowed release suffix format in failure, got:\n%s", combinedOutput)
 	}
 }
 
